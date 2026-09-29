@@ -79,6 +79,8 @@ offer
 - `CAPTURE_ON_HIT` / `CAPTURE_FULL_PAGE` — 캡처 on/off, 전체 페이지 여부.
 - 캡처 중복 방지 — 아래 "5. 캡처 규칙" 참고 (`CAPTURE_STATE_NAME`, `FINGERPRINT_*`, `HIGHLIGHT_*`).
 - `MAX_WORKERS` — 동시 브라우저 수 (기본 4).
+- `RETRY_COUNT` / `RETRY_HTTP_STATUS` / `RETRY_DELAY_SEC` — 타임아웃·브라우저 오류와 HTTP 400·429·5xx 는 **새 브라우저 컨텍스트로** 쉬었다가 다시 연다(기본 2회). 404·리다이렉트는 재시도 없이 바로 `접근실패`.
+  작업(사이트×페이지)마다 컨텍스트를 새로 만들어 쿠키·세션 상태가 다음 사이트로 넘어가지 않게 한다.
 - `OUTPUT_DIR` — 기본 `스크립트 폴더\output`.
 
 ## 3. 실행
@@ -149,7 +151,7 @@ python promo_link_checker_v1.0.py --debug            # 사이트별 클릭 요�
 | 폴더 | 용도 |
 |---|---|
 | `promo_link_checker\` | 작업용 — 코드 수정·테스트. 스케줄러가 돌리지 않는다 |
-| `promo_link_checker_<캠페인>\` | 운영 사본 (타겟 = spring sale) — **스케줄러가 이 폴더의 코드를 돌린다**. 리포트·캡처·기록도 여기에 쌓인다 |
+| `promo_link_checker_<캠페인>\` | 운영 사본 (캠페인별 KEYWORDS) — **스케줄러가 이 폴더의 코드를 돌린다**. 리포트·캡처·기록도 여기에 쌓인다 |
 
 작업용에서 코드를 고친 뒤 운영에 반영하려면 **`.py` 만** 운영 폴더에 덮어쓴다 (`output\` 은 건드리지 않음).
 다른 캠페인을 추가로 감시하려면 운영 폴더를 하나 더 복사해 `KEYWORDS` 만 바꾸고 작업명을 달리 등록한다.

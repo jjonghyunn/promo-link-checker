@@ -251,8 +251,12 @@ SCROLL_PAUSE_MS: int = 400
 SCROLL_MAX_STEPS: int = 60
 # 스크롤 후 추가 요청이 잦아들기를 기다리는 상한
 SETTLE_NETWORKIDLE_MS: int = 8_000
-# 접근 실패(타임아웃·브라우저 오류) 재시도 횟수. HTTP 4xx/5xx·리다이렉트는 재시도 안 함.
-RETRY_COUNT: int = 1
+# 접근 실패 재시도 횟수 — 타임아웃·브라우저 오류, 그리고 아래 RETRY_HTTP_STATUS. 404·리다이렉트는 재시도 안 함.
+RETRY_COUNT: int = 2
+# 이 HTTP 상태면 새 브라우저 컨텍스트로 잠깐 쉬었다 다시 연다.
+# ⚠ 2026-09-29 스케줄 실행에서 400 이 한 워커에 연달아(1초 간격) 15건 났다 — 일시적 차단·세션 상태 문제로 보여 재시도 대상.
+RETRY_HTTP_STATUS: set[int] = {400, 429, 500, 502, 503, 504}
+RETRY_DELAY_SEC: int = 10
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -419,17 +423,16 @@ class BrowserSession:
         self.context.set_default_timeout(BROWSER_TIMEOUT_MS)
 
     def new_page(self) -> Page:
+        """작업마다 **새 컨텍스트**의 페이지를 준다 (브라우저 프로세스는 재사용).
+        ⚠ 컨텍스트를 여러 사이트에 이어 쓰면 쿠키·세션 상태가 다음 사이트로 넘어간다 —
+          2026-09-29 한 워커에서만 HTTP 400 이 연달아 난 뒤로 작업 단위로 격리한다."""
         try:
-            return self.context.new_page()
-        except Exception as e:
-            # context 가 죽은 경우가 있어 한 번만 되살린다.
-            logger.debug("new_page failed, recreating context: %s", e)
-            try:
+            if self.context is not None:
                 self.context.close()
-            except Exception:
-                pass
-            self._new_context()
-            return self.context.new_page()
+        except Exception:
+            pass
+        self._new_context()
+        return self.context.new_page()
 
     def close(self) -> None:
         for obj in (self.context, self._browser):
@@ -567,6 +570,14 @@ def _state_key(sitecode: str, page_key: str) -> str:
 
 # ─── 한 사이트 검사 ────────────────────────────────────────────────
 
+class RetryableHttpStatus(Exception):
+    """RETRY_HTTP_STATUS 응답 — check_site_with_retry 가 새 컨텍스트로 다시 연다."""
+
+    def __init__(self, status: int):
+        super().__init__(f"HTTP {status}")
+        self.status = status
+
+
 def _result(sitecode, page, url, result, final_url="", keywords="", links="", capture="", detail="",
             prev_capture="", new_elements=""):
     return {
@@ -595,6 +606,8 @@ def check_site(sitecode: str, page_key: str, rules, capture: bool, run_date: str
     try:
         response = page.goto(url, wait_until=BROWSER_WAIT_UNTIL)
         status = response.status if response else None
+        if status in RETRY_HTTP_STATUS:
+            raise RetryableHttpStatus(status)
         if status is not None and status >= 400:
             return _result(sitecode, page_key, url, f"{RESULT_FAIL_PREFIX}(HTTP {status})", page.url)
         if not _same_page(url, page.url):
@@ -694,12 +707,23 @@ def check_site(sitecode: str, page_key: str, rules, capture: bool, run_date: str
 def check_site_with_retry(sitecode: str, page_key: str, rules, capture: bool, run_date: str,
                           known: dict | None = None) -> dict:
     last_error = ""
+    last_status = None
     for attempt in range(RETRY_COUNT + 1):
+        if attempt:
+            time.sleep(RETRY_DELAY_SEC)
         try:
             return check_site(sitecode, page_key, rules, capture, run_date, known)
+        except RetryableHttpStatus as e:
+            last_status, last_error = e.status, f"HTTP {e.status}"
+            logger.debug("[%s/%s] attempt %d: HTTP %s → retry", sitecode, page_key, attempt + 1, e.status)
         except Exception as e:
+            last_status = None
             last_error = f"{type(e).__name__}: {str(e).splitlines()[0][:150]}"
             logger.debug("[%s/%s] attempt %d failed: %s", sitecode, page_key, attempt + 1, last_error)
+    if last_status is not None:
+        return _result(sitecode, page_key, build_url(sitecode, page_key),
+                       f"{RESULT_FAIL_PREFIX}(HTTP {last_status})",
+                       detail=f"{RETRY_COUNT + 1}회 모두 HTTP {last_status}")
     kind = "timeout" if "Timeout" in last_error else "error"
     return _result(sitecode, page_key, build_url(sitecode, page_key), f"{RESULT_FAIL_PREFIX}({kind})",
                    detail=last_error)
