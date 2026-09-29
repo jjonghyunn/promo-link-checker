@@ -1,0 +1,14 @@
+# Python cache
+__pycache__/
+*.pyc
+
+# 실행 산출물 (리포트·캡처·기록·로그)
+output/
+*.png
+*.xlsx
+
+# 작업/검증 잔재
+*test*
+*backup*
+*(편집)*
+*sample*
