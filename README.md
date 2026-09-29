@@ -21,7 +21,7 @@
 
 ```python
 KEYWORDS = """
-spring sale
+summer sale
 """
 ```
 
@@ -31,12 +31,12 @@ spring sale
 
 | 링크 | 결과 | 이유 |
 |---|---|---|
-| `…/ae/spring-sale/` | ✅ hit | 한 구간에 spring·sale |
-| `…/ae/offer/spring-big-sale/` | ✅ hit | 사이에 낀 단어 무관 |
-| `…/ae/offer/SpringSale2026/` | ✅ hit | 붙여 써도 부분일치 |
-| `…/model-x/buy/` (텍스트 "Spring Sale") | ❌ | **링크 텍스트·콜값 속성은 매칭에 안 쓴다** (리포트 설명용) |
-| `partner.example.com/spring/summersales/` | ❌ | 두 단어가 **다른 구간** |
-| `…/offer/?cid=spring-sale` | ❌ | **쿼리 파라미터·#fragment 제외** |
+| `…/ae/summer-sale/` | ✅ hit | 한 구간에 summer·sale |
+| `…/ae/offer/summer-big-sale/` | ✅ hit | 사이에 낀 단어 무관 |
+| `…/ae/offer/SummerSale2026/` | ✅ hit | 붙여 써도 부분일치 |
+| `…/model-x/buy/` (텍스트 "Summer Sale") | ❌ | **링크 텍스트·콜값 속성은 매칭에 안 쓴다** (리포트 설명용) |
+| `partner.example.com/summer/megasales/` | ❌ | 두 단어가 **다른 구간** |
+| `…/offer/?cid=summer-sale` | ❌ | **쿼리 파라미터·#fragment 제외** |
 | `…/offer/pay-sale/` | ❌ | **도메인(host) 제외** — 넣으면 모든 링크가 브랜드명을 가져 `sale` 만으로 걸린다 |
 
 ### CHECK_PAGES — 볼 페이지

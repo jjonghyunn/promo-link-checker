@@ -14,8 +14,8 @@ promo_link_checker — 국가별 홈 · 프로모션(offer) 페이지의 클릭 
 키워드 규칙 (KEYWORDS):
   한 줄 = 규칙 1개. 줄 안의 단어는 공백으로 구분하고, **URL 경로의 '/' 와 '/' 사이 한 구간 안에
   모두 들어 있어야(AND)** hit. 구간 안에서의 순서·사이 단어·구분자(- _ .)는 무관하다.
-    예) "spring sale" → /spring-sale/ · /spring_sale/ · /spring-big-sale/ · /springsale/ hit
-        /spring/summersales/ (두 구간에 나뉨) · ?campaign=spring-sale (쿼리) · 링크 텍스트만 일치 → 제외
+    예) "summer sale" → /summer-sale/ · /summer_sale/ · /summer-big-sale/ · /summersale/ hit
+        /summer/megasales/ (두 구간에 나뉨) · ?campaign=summer-sale (쿼리) · 링크 텍스트만 일치 → 제외
   host(도메인)·쿼리 파라미터·#fragment 는 보지 않는다. 여러 줄이면 OR.
 
 사용 예:
@@ -64,7 +64,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 # 한 줄 = 규칙 1개 / 줄 안 단어는 AND / 줄끼리는 OR. 대소문자·구분자 무시, 부분일치.
 # '#' 으로 시작하는 줄과 빈 줄은 무시한다. 따옴표 없이 그대로 적는다.
 KEYWORDS = """
-spring sale
+summer sale
 """
 
 # ─── 대상 국가 ─────────────────────────────────────────────────────
@@ -374,7 +374,7 @@ def path_segments(url: str) -> list[str]:
 
 def match_rules(url: str, rules: list[tuple[str, list[str]]]) -> list[str]:
     """경로 구간 **하나**에 규칙 단어가 모두 들어 있으면 그 규칙 원문을 돌려준다.
-    ⚠ 구간을 합쳐서 보면 /spring/summersales/ 처럼 서로 다른 구간의 단어가 섞여 걸린다."""
+    ⚠ 구간을 합쳐서 보면 /summer/megasales/ 처럼 서로 다른 구간의 단어가 섞여 걸린다."""
     segments = path_segments(url)
     return [line for line, words in rules
             if any(all(w in seg for w in words) for seg in segments)]
