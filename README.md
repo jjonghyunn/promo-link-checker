@@ -1,10 +1,10 @@
 # promo_link_checker  
-<sub>2026-09-29  Jonghyun Park w/ Claude</sub>  
+<sub>2026-10-01  Jonghyun Park w/ Claude</sub>  
 국가별 **home · 프로모션(offer) 페이지의 클릭 가능한 요소** 중에 타겟 캠페인 링크가 걸려 있는지 매일 확인하고,
 결과를 `_daily_report.xlsx` 에 하루 1블록씩 누적하는 도구. 캡처는 **처음 보는 hit 요소, 또는 디자인이
 바뀐 요소가 있을 때만 1회** 찍는다(매일 누적 캡처하지 않음).
 
-- 단일 파일 `promo_link_checker_v1.0.py` — 설정은 전부 상단 `사용자가 바꿔야 하는 부분` 블록.
+- 단일 파일 `promo_link_checker_v1.2.py` — 설정은 전부 상단 `사용자가 바꿔야 하는 부분` 블록.
 
 ---
 
@@ -78,33 +78,46 @@ offer
   리포트에는 `[GNB/Footer]` 태그가 붙어 구분된다.
 - `CAPTURE_ON_HIT` / `CAPTURE_FULL_PAGE` — 캡처 on/off, 전체 페이지 여부.
 - 캡처 중복 방지 — 아래 "5. 캡처 규칙" 참고 (`CAPTURE_STATE_NAME`, `FINGERPRINT_*`, `HIGHLIGHT_*`).
+- 캡처 표시 — `CAPTURE_LEGEND`(맨 위 범례 박스) / `CAPTURE_BADGE`(번호 배지) / `CAPTURE_REVEAL_HIDDEN`(접힌 메뉴 펼쳐 캡처)
+  on/off, `REVEAL_HOVER_WAIT_MS`·`REVEAL_MAX_CAPTURES` 등. 아래 "5. 캡처 규칙 › 캡처에서 hit 요소 찾기" 참고.
 - `MAX_WORKERS` — 동시 브라우저 수 (기본 4).
 - `RETRY_COUNT` / `RETRY_HTTP_STATUS` / `RETRY_DELAY_SEC` — 타임아웃·브라우저 오류와 HTTP 400·429·5xx 는 **새 브라우저 컨텍스트로** 쉬었다가 다시 연다(기본 2회). 404·리다이렉트는 재시도 없이 바로 `접근실패`.
   작업(사이트×페이지)마다 컨텍스트를 새로 만들어 쿠키·세션 상태가 다음 사이트로 넘어가지 않게 한다.
-- `OUTPUT_DIR` — 기본 `스크립트 폴더\output`.
+- `OUTPUT_DIR` — 기본 `스크립트 폴더\output` (리포트·기록·로그).
+- `CAPTURE_DIR` — 캡처 저장 폴더(절대경로). 작업용·운영 폴더가 같은 `.py` 를 쓰므로 **작업용 폴더에서 테스트해도 캡처는 여기에 쌓인다.**
 
 ## 3. 실행
 
 ```bash
-python promo_link_checker_v1.0.py                    # SITECODES 전체
-python promo_link_checker_v1.0.py --sitecodes ae,hq # 일부 국가만
-python promo_link_checker_v1.0.py --pages home       # 일부 페이지만
-python promo_link_checker_v1.0.py --no-capture       # hit 여도 캡처 안 함
-python promo_link_checker_v1.0.py --debug            # 사이트별 클릭 요소 수 등 진단 로그
+python promo_link_checker_v1.2.py                    # SITECODES 전체
+python promo_link_checker_v1.2.py --sitecodes ae,hq # 일부 국가만
+python promo_link_checker_v1.2.py --pages home       # 일부 페이지만
+python promo_link_checker_v1.2.py --no-capture       # hit 여도 캡처 안 함
+python promo_link_checker_v1.2.py --debug            # 사이트별 클릭 요소 수 등 진단 로그
 ```
 
 ## 4. 출력
 
 ```
-260929_promo_link_checker/
-├── promo_link_checker_v1.0.py
+promo_link_checker/
+├── promo_link_checker_v1.2.py
 ├── README.md
 └── output/
     ├── _daily_report.xlsx            ← 일일 누적 리포트
     ├── _run_latest.log               ← 매 실행 덮어씀 (스케줄 실행 추적용)
-    ├── _capture_state.json           ← 이미 캡처한 요소 기록 (지우면 처음부터 다시 캡처)
-    └── capture/<MMDD>/<sitecode>_<page>_<HHMM>.png  ← 새 요소·디자인 변경이 있을 때만
+    └── _capture_state.json           ← 이미 캡처한 요소 기록 (지우면 처음부터 다시 캡처)
+
+<CAPTURE_DIR>/                        ← 캡처 저장 폴더 (절대경로 상수, output 과 별개 위치)
+└── <sitecode>/
+    ├── <sitecode>_<page>_<YYMMDD>_<HHMM>.png       ← 화면에 보이는 새 요소·디자인 변경이 있을 때만 (전체 페이지)
+    └── <sitecode>_<page>_menu_<YYMMDD>_<HHMM>.png  ← 새 hit 요소가 접힌 메뉴 안에 있을 때, 메뉴를 펼친 화면
 ```
+
+캡처는 `CAPTURE_DIR`(절대경로) 아래 **sitecode 폴더**에 모은다 (v1.2, 날짜 폴더 없음). 리포트·기록·로그는
+`output\` 에 그대로 남는다. 요소당 1회만 찍으므로 폴더 안에는 새 요소·디자인 변경이
+있었던 날의 캡처만 쌓이고, 찍은 날짜·시각은 파일명 맨 뒤(`_<YYMMDD>_<HHMM>`, `CAPTURE_TIME_FORMAT`)에 남는다.
+`CAPTURE_DIR` 이 `output\` 밖이면 리포트·기록에는 캡처가 절대경로로 적힌다.
+아래에서 `_menu.png` 라고 부르는 것은 이 `…_menu_<YYMMDD>_<HHMM>.png` 파일이다.
 
 ### _daily_report.xlsx
 | A | B | C | D | E | F | G … |
@@ -115,7 +128,10 @@ python promo_link_checker_v1.0.py --debug            # 사이트별 클릭 요�
 - **최신 날짜 블록이 항상 D~F열**이고, 과거 날짜는 오른쪽으로 밀린다. 열어서 A~F 만 보면 오늘 상태다.
 - 결과 값: `O`(녹색, hit) / `X`(없음) / `접근실패(HTTP 404·redirect·timeout·error)`(빨강) / `(미실행)`.
 - `O` 셀은 **캡처 PNG 로 하이퍼링크**된다 — 그날 새로 찍었으면 새 캡처, 아니면 그 요소의 기존 캡처.
-- 매칭링크 셀: `URL (링크 텍스트) [GNB/Footer] 🆕신규 / 🔄디자인변경` + `📷 새 캡처: …` 또는 `📷 기존 캡처: …`.
+  새 요소가 전부 접힌 메뉴 안이면 전체 캡처 대신 **메뉴를 펼친 캡처**(`_menu.png`)로 연결된다.
+  GNB/Footer 요소는 sitecode 당 한 번만 찍으므로, offer 행의 `O` 가 home 에서 찍은 캡처로 연결될 수 있다.
+- 매칭링크 셀: `URL (링크 텍스트) [GNB/Footer] [숨김] 🆕신규 / 🔄디자인변경` + `📷 새 캡처: …`(+ `📷 추가 캡처: …`)
+  또는 `📷 기존 캡처: …`. `[숨김]` = 접힌 메뉴·안 보이는 슬라이드 안이라 화면에 안 보이는 요소.
 - 같은 날 다시 돌리면 그 날짜 블록을 덮어쓴다(열이 늘지 않음). `--sitecodes`/`--pages` 로 일부만 돌리면
   대상 밖 행의 그날 값은 보존된다.
 - 저장은 임시파일 → 무결성 확인 → 교체 방식이라 저장 중 실패해도 누적 이력이 안 날아간다.
@@ -124,6 +140,8 @@ python promo_link_checker_v1.0.py --debug            # 사이트별 클릭 요�
 ## 5. 캡처 규칙 (1회성)
 
 - 요소 식별 = **sitecode + page + 링크 URL**(host+path, 쿼리·# 제외).
+  단 **GNB/Footer 안 요소는 page 를 빼고 sitecode + 링크 URL** 로 본다 (v1.2) — 모든 페이지에 똑같이 나오므로
+  home 에서 찍었으면 offer 에서는 다시 찍지 않는다. 그래서 한 sitecode 의 페이지들은 같은 워커가 순서대로 돈다.
 - 요소마다 **디자인 지문**(12자리 해시)을 만든다. 재료는 `FINGERPRINT_FIELDS`:
 
   | 항목 | 내용 |
@@ -137,8 +155,18 @@ python promo_link_checker_v1.0.py --debug            # 사이트별 클릭 요�
   - 처음 보는 링크 → **🆕신규**, 캡처
   - 본 적 있는 링크인데 지문이 다름 → **🔄디자인변경**, 캡처
   - 링크·지문 모두 본 적 있음 → 캡처 생략 (리포트는 기존 캡처로 링크)
-- 한 페이지에 신규/변경 요소가 하나라도 있으면 그 페이지를 1장 찍고, 신규/변경 요소는 **빨간 실선**,
+- 한 페이지에 **화면에 보이는** 신규/변경 요소가 하나라도 있으면 그 페이지를 1장 찍고, 신규/변경 요소는 **빨간 실선**,
   이미 찍은 요소는 **주황 점선** 테두리로 구분한다.
+- 신규/변경 요소가 **전부 접힌 메뉴 안**이면 전체 캡처는 생략하고 메뉴를 펼친 `_menu.png` 만 남긴다 (v1.2).
+  전체 캡처에는 테두리가 하나도 없어 볼 게 없기 때문. 메뉴를 하나도 못 펼쳤을 때만 범례를 남기려고 전체 캡처를 찍는다.
+- **캡처에서 hit 요소 찾기** (v1.1):
+  - 캡처 맨 위 **범례 박스**에 hit 요소를 한 줄씩 적는다 — `번호 [본문|GNB/Footer] 링크 텍스트 → URL (신규/디자인변경/기존)`.
+  - 화면에 보이는 요소는 테두리 왼쪽 위에 범례와 같은 **번호 배지**가 붙는다.
+  - 접힌 GNB 메뉴 안처럼 **화면에 안 보이는 요소**는 전체 캡처에 테두리가 없다(범례에 `⚠ 화면에 안 보임` 표기).
+    이때는 그 요소의 가장 가까운 보이는 조상(GNB 1단계 메뉴 등)에 마우스를 올려 메뉴를 펼친 뒤
+    **현재 화면을 `_menu.png` 로** 찍는다. 마우스를 올려도 안 나타나면(캐러셀의 안 보이는 슬라이드 등) 건너뛴다.
+    이미 찍은 적 있는 숨은 요소 때문에 메뉴를 다시 펼쳐 찍지는 않는다.
+  - 순서는 펼친 캡처 → 범례 삽입 → 전체 캡처. 범례를 먼저 넣으면 GNB 메뉴가 hover 로 열리지 않는다.
 - 기록은 `output/_capture_state.json`. **캡처에 성공했을 때만** 기록한다(실패하면 다음 실행에서 다시 시도).
   `--no-capture` 로 돌린 날도 기록하지 않는다. 파일을 지우면 모든 요소를 처음부터 다시 캡처한다.
 - 같은 요소가 매일 다시 찍힌다면 지문이 불안정한 것 — `FINGERPRINT_FIELDS` 에서 항목을 빼거나
@@ -156,12 +184,12 @@ python promo_link_checker_v1.0.py --debug            # 사이트별 클릭 요�
 작업용에서 코드를 고친 뒤 운영에 반영하려면 **`.py` 만** 운영 폴더에 덮어쓴다 (`output\` 은 건드리지 않음).
 다른 캠페인을 추가로 감시하려면 운영 폴더를 하나 더 복사해 `KEYWORDS` 만 바꾸고 작업명을 달리 등록한다.
 
-작업명 `promo_link_checker_<캠페인>`, 매일 **12:01**, `pythonw.exe` 직접 실행(콘솔 창 없음):
+작업명 `promo_link_checker_<캠페인>`, 매일 **09:31 · 12:01**, `pythonw.exe` 직접 실행(콘솔 창 없음):
 
 ```powershell
-$script   = "<운영 폴더>\promo_link_checker_v1.0.py"
+$script   = "<운영 폴더>\promo_link_checker_v1.2.py"
 $action   = New-ScheduledTaskAction -Execute "C:\Python314\pythonw.exe" -Argument "`"$script`"" -WorkingDirectory (Split-Path $script)
-$trigger  = New-ScheduledTaskTrigger -Daily -At "12:01"
+$trigger  = @("09:31", "12:01") | ForEach-Object { $t = New-ScheduledTaskTrigger -Daily -At $_; $t.EndBoundary = "2026-12-10T23:59:59"; $t }
 $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Hours 2) -MultipleInstances IgnoreNew
 Register-ScheduledTask -TaskName "promo_link_checker_<캠페인>" -Action $action -Trigger $trigger -Settings $settings -Force
 
@@ -169,7 +197,9 @@ Start-ScheduledTask -TaskName "promo_link_checker_<캠페인>"                  
 Get-ScheduledTask -TaskName "promo_link_checker_<캠페인>" | Get-ScheduledTaskInfo         # 다음 실행 / 마지막 결과
 ```
 
-- `StartWhenAvailable` — 12:01 에 PC 가 꺼져 있었으면 켜진 뒤 바로 실행한다.
+- 트리거는 하루 2번(09:31, 12:01)이고 둘 다 **종료일**(`EndBoundary`)이 걸려 있어 그 뒤로는 실행되지 않는다.
+  같은 날 두 번째 실행은 그 날짜 블록을 덮어쓴다.
+- `StartWhenAvailable` — 예약 시각에 PC 가 꺼져 있었으면 켜진 뒤 바로 실행한다.
 - `ExecutionTimeLimit 2h` / `MultipleInstances IgnoreNew` — 멈춘 실행을 끊고, 겹쳐 돌지 않게 한다.
 - 로그온 상태에서만 실행된다(기본 계정 설정).
 - 경로는 전부 스크립트 폴더 기준이라 작업 디렉터리에 의존하지 않는다.
@@ -180,4 +210,5 @@ Get-ScheduledTask -TaskName "promo_link_checker_<캠페인>" | Get-ScheduledTask
 - **한국 IP 기준** 결과다. 국가별 IP 리다이렉션이 걸리는 사이트(예: 운영 중단된 `ge`)는 열리지 않는다.
 - 스크롤로 레이지 로딩 영역을 띄운 뒤 검사하지만, 탭·캐러셀 **안 보이는 슬라이드**의 링크는 DOM 에
   있으면 잡히고, 클릭해야 불러오는 콘텐츠는 못 잡는다.
-- GNB 메가메뉴처럼 화면에 안 보이는 링크가 hit 이면 캡처에 테두리가 보이지 않을 수 있다(리포트 `[GNB/Footer]` 태그 참고).
+- GNB 메가메뉴처럼 화면에 안 보이는 링크가 hit 이면 메뉴를 펼친 `_menu.png` 에 표시된다 (전체 캡처에는 테두리가 없다).
+  마우스를 올려서 열리는 메뉴만 펼칠 수 있다 — 클릭해야 열리는 메뉴·캐러셀 슬라이드는 범례와 리포트 `[숨김]` 태그로만 알 수 있다.

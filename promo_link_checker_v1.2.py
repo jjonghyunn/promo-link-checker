@@ -1,5 +1,11 @@
-# promo_link_checker_v1.0.py
-# 2026-09-29  Jonghyun Park w/ Claude
+# promo_link_checker_v1.2.py
+# 2026-10-01  Jonghyun Park w/ Claude
+# v1.2 (2026-10-01): 캡처 중복 제거 — 새 요소가 전부 접힌 메뉴 안이면 전체 캡처를 생략하고 펼친 캡처(_menu.png)만 남긴다.
+#                    GNB/Footer 요소는 페이지(home·offer) 공통이라 sitecode 당 한 번만 캡처한다.
+#                    캡처 저장 위치 = CAPTURE_DIR(절대경로)/<sitecode>/ (날짜 폴더 없음), 파일명 맨 뒤에 찍은 날짜·시각(_YYMMDD_HHMM)
+# v1.1 (2026-10-01): 캡처에 범례 박스·번호 배지 추가, 화면에 안 보이는 hit 요소(접힌 GNB 메뉴 안 등)는
+#                    메뉴를 펼쳐 추가 캡처(_menu.png), 리포트에 [숨김] 태그
+# (이전 버전 이력은 git history / GitHub Releases 참조 — 헤더에는 최근 2개 항목만 남긴다)
 r"""
 promo_link_checker — 국가별 홈 · 프로모션(offer) 페이지의 클릭 가능한 요소 중에
 타겟 캠페인 링크가 걸려 있는지 매일 확인한다. 볼 페이지는 CHECK_PAGES 로 고른다.
@@ -8,7 +14,9 @@ promo_link_checker — 국가별 홈 · 프로모션(offer) 페이지의 클릭 
   SITECODES × CHECK_PAGES → URL 생성 (home = /{sitecode}/, offer = /{sitecode}/offer/, hq 는 /hq/shop/)
   → Playwright 로 방문 · 쿠키 배너 닫기 · 끝까지 스크롤(레이지 로딩 링크 노출)
   → 모든 <a href> 의 URL 경로를 '/' 로 쪼개 각 구간을 KEYWORDS 규칙과 대조
-  → 처음 보는 hit 요소(또는 디자인이 바뀐 요소)가 있을 때만 빨간 테두리를 그려 전체 페이지 캡처 (1회성)
+  → 처음 보는 hit 요소(또는 디자인이 바뀐 요소)가 있을 때만 빨간 테두리 + 번호 배지를 그려 전체 페이지 캡처 (1회성)
+    캡처 맨 위 범례 박스에 번호별 링크를 적고, 접힌 메뉴 안이라 안 보이는 요소는 메뉴를 펼쳐 찍는다
+    (새 요소가 전부 접힌 메뉴 안이면 전체 캡처 없이 펼친 캡처만. GNB/Footer 요소는 sitecode 당 한 번만)
   → output/_daily_report.xlsx 에 하루 1블록 누적 (최신이 D~F열, 과거는 오른쪽으로 밀림)
 
 키워드 규칙 (KEYWORDS):
@@ -19,14 +27,15 @@ promo_link_checker — 국가별 홈 · 프로모션(offer) 페이지의 클릭 
   host(도메인)·쿼리 파라미터·#fragment 는 보지 않는다. 여러 줄이면 OR.
 
 사용 예:
-  python promo_link_checker_v1.0.py
-  python promo_link_checker_v1.0.py --sitecodes ae,hq
-  python promo_link_checker_v1.0.py --pages home
-  python promo_link_checker_v1.0.py --sitecodes uk --debug --no-capture
+  python promo_link_checker_v1.2.py
+  python promo_link_checker_v1.2.py --sitecodes ae,hq
+  python promo_link_checker_v1.2.py --pages home
+  python promo_link_checker_v1.2.py --sitecodes uk --debug --no-capture
 
 출력 (스크립트 폴더 기준):
   output/_daily_report.xlsx                      일일 누적 리포트 (유일한 상시 산출물)
-  output/capture/<MMDD>/<sitecode>_<page>_<HHMM>.png  새 요소·디자인 변경이 있을 때만
+  <CAPTURE_DIR>/<sitecode>/<sitecode>_<page>_<YYMMDD>_<HHMM>.png  화면에 보이는 새 요소·디자인 변경이 있을 때만
+  <CAPTURE_DIR>/<sitecode>/<sitecode>_<page>_menu_<YYMMDD>_<HHMM>.png  hit 요소가 접힌 메뉴 안에 있을 때, 메뉴를 펼친 화면
   output/_capture_state.json                     이미 캡처한 요소 기록 (지우면 처음부터 다시 캡처)
   output/_run_latest.log                         매 실행 덮어씀 (pythonw 스케줄 실행 추적용)
 
@@ -199,12 +208,17 @@ GLOBAL_UI_SELECTOR: str = "header, nav, footer, [class*='gnb'], [id*='gnb'], [an
 # ─── 출력 ──────────────────────────────────────────────────────────
 OUTPUT_DIR: Path = SCRIPT_DIR / "output"
 DAILY_REPORT_NAME: str = "_daily_report.xlsx"
-CAPTURE_SUBDIR: str = "capture"
+# 캡처 저장 폴더 (절대경로) — 이 아래에 sitecode 폴더가 생긴다. 리포트·기록·로그는 OUTPUT_DIR 에 그대로 남는다.
+# OUTPUT_DIR 밖이면 리포트·기록에는 절대경로로 적힌다.
+CAPTURE_DIR: Path = Path(r"C:\path\to\your\capture_archive")
+# 캡처 파일명 맨 뒤에 붙는 찍은 날짜·시각 (strftime 형식) → <sitecode>_<page>[_menu]_261001_1133.png
+CAPTURE_TIME_FORMAT: str = "%y%m%d_%H%M"
 # hit 요소를 캡처한다. False 면 캡처를 아예 안 한다 (--no-capture 와 같음)
 CAPTURE_ON_HIT: bool = True
 CAPTURE_FULL_PAGE: bool = True
 # ── 캡처 중복 방지 (1회성 캡처) ──
 # 같은 요소(sitecode + page + 링크 URL)는 **한 번만** 캡처한다. 매일 hit 여도 다시 찍지 않는다.
+# GNB/Footer 안 요소는 페이지마다 똑같이 나오므로 page 를 빼고 sitecode + 링크 URL 로 본다 (home 에서 찍었으면 offer 는 생략).
 # 단 그 요소의 디자인 지문(아래 FINGERPRINT_FIELDS)이 바뀌면 한 번 더 찍는다. 새 링크는 당연히 찍는다.
 # 기록 파일을 지우면 처음부터 다시 캡처한다.
 CAPTURE_STATE_NAME: str = "_capture_state.json"
@@ -220,6 +234,32 @@ FINGERPRINT_CLASS_IGNORE: str = r"active|current|visible|hidden|loaded|loading|l
 # 캡처 시 테두리: 새로 찍는 이유가 된 요소(신규·디자인 변경) / 이미 찍은 적 있는 요소
 HIGHLIGHT_STYLE: str = "4px solid red"
 HIGHLIGHT_KNOWN_STYLE: str = "3px dashed orange"
+# ── 캡처에서 hit 요소 찾기 쉽게 ──
+# 번호 배지: 테두리 왼쪽 위에 1·2·3… 번호를 붙인다 (범례 박스의 번호와 같다)
+CAPTURE_BADGE: bool = True
+BADGE_COLOR_NEW: str = "red"
+BADGE_COLOR_KNOWN: str = "orange"
+BADGE_STYLE: str = ("min-width:24px;height:24px;padding:0 7px;border-radius:12px;color:#fff;"
+                    "font:700 15px/24px Arial,sans-serif;text-align:center;box-shadow:0 0 0 2px #fff")
+# 범례 박스: 캡처 맨 위에 "번호 [영역] 링크 텍스트 → URL (신규/디자인변경/기존)" 을 한 줄씩 적는다
+CAPTURE_LEGEND: bool = True
+LEGEND_TITLE: str = "promo_link_checker — 타겟 링크가 걸린 요소"
+LEGEND_HIDDEN_NOTE: str = "  ⚠ 화면에 안 보임 (접힌 메뉴·안 보이는 슬라이드 안) — 전체 캡처에는 테두리가 없다"
+LEGEND_BOX_STYLE: str = ("position:relative;z-index:2147483647;box-sizing:border-box;width:100%;padding:12px 16px;"
+                         "background:#fffbe6;border-bottom:3px solid red;color:#111;text-align:left;"
+                         "font:14px/1.5 Arial,'Malgun Gothic',sans-serif")
+# 리포트 매칭링크에 붙는 태그 (화면에 안 보이는 요소)
+HIDDEN_TAG: str = "[숨김]"
+# 숨은 hit 요소 펼쳐 찍기: 그 요소의 가장 가까운 "보이는 조상"(GNB 1단계 메뉴 등)에 마우스를 올려
+# 요소가 나타나면 현재 화면(뷰포트)을 <캡처명>_menu.png 로 찍는다. 안 나타나면 건너뛴다.
+# 새 요소가 전부 숨은 요소이고 펼친 캡처가 찍혔으면 전체 페이지 캡처는 생략한다 (테두리 없는 전체 캡처는 볼 게 없다).
+CAPTURE_REVEAL_HIDDEN: bool = True
+REVEAL_CAPTURE_SUFFIX: str = "_menu"
+REVEAL_HOVER_WAIT_MS: int = 800
+# 마우스를 메뉴 위로 옮길 때 거치는 중간 단계 수 (한 번에 점프하면 hover 이벤트가 안 걸리는 메뉴가 있다)
+REVEAL_MOUSE_STEPS: int = 5
+# 한 페이지에서 펼쳐 찍는 추가 캡처 상한 (서로 다른 메뉴에 흩어져 있을 때)
+REVEAL_MAX_CAPTURES: int = 3
 # 리포트 셀에 적을 매칭 링크 최대 개수 (넘으면 "… 외 N건")
 MAX_LINKS_IN_REPORT: int = 20
 # 리포트 저장 전 최소 여유공간(MB). 0 이면 검사 안 함.
@@ -267,9 +307,10 @@ LOGGER_NAME = "promo_link_checker"
 logger = logging.getLogger(LOGGER_NAME)
 
 RESULT_COLUMNS = ["sitecode", "page", "url", "final_url", "result", "keywords", "links",
-                  "capture", "prev_capture", "new_elements", "detail", "checked_at"]
+                  "capture", "more_captures", "prev_capture", "new_elements", "detail", "checked_at"]
 _RE_CSS_URL = re.compile(r"""url\(["']?([^"')]+)["']?\)""")
 _RE_DIGITS = re.compile(r"\d+")
+_RE_URI_ESCAPE = re.compile(r"[%# ]")       # file:// 하이퍼링크에서 인코딩할 글자 (_capture_link)
 # 리포트: A=sitecode, B=page, C=url 고정, 이후 하루 3열 [결과, 매칭키워드, 매칭링크]
 REPORT_FIXED_COLS = 3
 REPORT_DAY_HEADERS = ("결과", "매칭키워드", "매칭링크")
@@ -302,29 +343,124 @@ _JS_COLLECT = r"""({selector, textAttrs, uiSelector}) => {
     return out;
 }"""
 
-# hit 요소의 디자인 지문 재료 (크기·class·이미지·텍스트)
-_JS_DESCRIBE = r"""(idxs) => idxs.map(i => {
-    const el = document.querySelector(`[data-plc-idx="${i}"]`);
-    if (!el) return null;
-    const r = el.getBoundingClientRect();
-    const imgs = Array.from(el.querySelectorAll("img"))
-        .map(im => im.currentSrc || im.getAttribute("src") || im.getAttribute("data-src") || "");
-    const bgs = [el, ...Array.from(el.querySelectorAll("*")).slice(0, 50)]
-        .map(n => getComputedStyle(n).backgroundImage).filter(b => b && b !== "none");
-    return {
-        idx: i, w: r.width, h: r.height,
-        classes: el.getAttribute("class") || "",
-        imgs: imgs, bgs: bgs,
-        text: (el.innerText || el.textContent || "").replace(/\s+/g, " ").trim().slice(0, 300),
+# 요소가 실제로 화면에 그려지는지 판정하는 JS 헬퍼 (아래 JS 들이 앞에 붙여 쓴다).
+#   plcRect    = 요소 사각형 (inline <a> 가 크기 0 이면 크기 있는 첫 자식 것)
+#   plcVisible = 크기 있음 + visibility/opacity/display 로 안 숨음 + overflow 조상에 잘려 나가지 않음
+_JS_VISIBLE_FN = r"""
+    const plcRect = (el) => {
+        const r = el.getBoundingClientRect();
+        if (r.width >= 1 && r.height >= 1) return r;
+        for (const c of el.children) {
+            const cr = c.getBoundingClientRect();
+            if (cr.width >= 1 && cr.height >= 1) return cr;
+        }
+        return r;
     };
-})"""
+    const plcVisible = (el) => {
+        if (!el) return false;
+        const r = plcRect(el);
+        if (r.width < 1 || r.height < 1) return false;
+        if (el.checkVisibility && !el.checkVisibility({checkOpacity: true, checkVisibilityCSS: true})) return false;
+        for (let p = el.parentElement; p && p !== document.body && p !== document.documentElement; p = p.parentElement) {
+            const cs = getComputedStyle(p);
+            if (!/hidden|clip|scroll|auto/.test(cs.overflowX + " " + cs.overflowY)) continue;
+            const pr = p.getBoundingClientRect();
+            if (r.right <= pr.left + 1 || r.left >= pr.right - 1 || r.bottom <= pr.top + 1 || r.top >= pr.bottom - 1) return false;
+        }
+        return true;
+    };
+"""
 
-_JS_HIGHLIGHT = r"""({idxs, style}) => {
-    for (const i of idxs) {
+# hit 요소의 디자인 지문 재료 (크기·class·이미지·텍스트) + 화면에 보이는지(visible — 지문에는 안 넣는다)
+_JS_DESCRIBE = "(idxs) => {" + _JS_VISIBLE_FN + r"""
+    return idxs.map(i => {
         const el = document.querySelector(`[data-plc-idx="${i}"]`);
-        if (el) { el.style.outline = style; el.style.outlineOffset = "2px"; }
+        if (!el) return null;
+        const r = el.getBoundingClientRect();
+        const imgs = Array.from(el.querySelectorAll("img"))
+            .map(im => im.currentSrc || im.getAttribute("src") || im.getAttribute("data-src") || "");
+        const bgs = [el, ...Array.from(el.querySelectorAll("*")).slice(0, 50)]
+            .map(n => getComputedStyle(n).backgroundImage).filter(b => b && b !== "none");
+        return {
+            idx: i, w: r.width, h: r.height,
+            classes: el.getAttribute("class") || "",
+            imgs: imgs, bgs: bgs,
+            text: (el.innerText || el.textContent || "").replace(/\s+/g, " ").trim().slice(0, 300),
+            visible: plcVisible(el),
+        };
+    });
+}"""
+
+# idx 목록 중 지금 화면에 보이는 것만 돌려준다 (메뉴를 펼친 뒤 확인용)
+_JS_VISIBLE_IDXS = "(idxs) => {" + _JS_VISIBLE_FN + r"""
+    return idxs.filter(i => plcVisible(document.querySelector(`[data-plc-idx="${i}"]`)));
+}"""
+
+# 테두리 + 번호 배지. marks = [{idx, n, outline, color}], temp=True 면 배지를 _JS_CLEAR_TEMP 로 지울 수 있다.
+_JS_MARK = "({marks, badge, badgeStyle, temp}) => {" + _JS_VISIBLE_FN + r"""
+    for (const m of marks) {
+        const el = document.querySelector(`[data-plc-idx="${m.idx}"]`);
+        if (!el) continue;
+        el.style.outline = m.outline;
+        el.style.outlineOffset = "2px";
+        if (!badge) continue;
+        const r = plcRect(el);
+        const b = document.createElement("div");
+        b.setAttribute("data-plc-badge", temp ? "temp" : "1");
+        b.textContent = String(m.n);
+        b.style.cssText = badgeStyle + ";position:absolute;z-index:2147483647;pointer-events:none"
+            + `;background:${m.color};left:${Math.max(0, r.left + window.scrollX - 16)}px`
+            + `;top:${Math.max(0, r.top + window.scrollY - 16)}px`;      // 요소 왼쪽 위 모서리에 걸친다
+        document.body.appendChild(b);
     }
 }"""
+
+_JS_CLEAR_TEMP = r"""() => document.querySelectorAll('[data-plc-badge="temp"]').forEach(n => n.remove())"""
+
+# 범례 박스를 페이지 맨 위(본문 흐름 안)에 끼워 넣는다. lines = [{n, color, text}]
+_JS_LEGEND = r"""({title, lines, boxStyle}) => {
+    const box = document.createElement("div");
+    box.setAttribute("data-plc-legend", "1");
+    box.style.cssText = boxStyle;
+    const head = document.createElement("div");
+    head.textContent = title;
+    head.style.cssText = "font-weight:700;margin-bottom:6px";
+    box.appendChild(head);
+    for (const l of lines) {
+        const row = document.createElement("div");
+        row.style.cssText = "margin:3px 0;word-break:break-all";
+        if (l.n) {
+            const num = document.createElement("span");
+            num.textContent = String(l.n);
+            num.style.cssText = "display:inline-block;min-width:22px;padding:0 6px;margin-right:8px;border-radius:11px;"
+                + `color:#fff;font-weight:700;text-align:center;background:${l.color}`;
+            row.appendChild(num);
+        }
+        row.appendChild(document.createTextNode(l.text));
+        box.appendChild(row);
+    }
+    document.body.insertBefore(box, document.body.firstChild);
+}"""
+
+# 숨은 요소의 가장 가까운 "보이는 조상"(마우스를 올릴 대상)의 화면 좌표. 없으면 null.
+_JS_REVEAL_TARGET = "(idx) => {" + _JS_VISIBLE_FN + r"""
+    const el = document.querySelector(`[data-plc-idx="${idx}"]`);
+    for (let p = el && el.parentElement; p && p !== document.body; p = p.parentElement) {
+        const own = p.getBoundingClientRect();          // 높이 0 으로 접힌 컨테이너는 건너뛴다 (자식 크기로 대신하지 않음)
+        if (own.width < 1 || own.height < 1 || !plcVisible(p)) continue;
+        p.scrollIntoView({block: "nearest"});
+        const r = p.getBoundingClientRect();
+        // 대상 위에 실제로 놓인 요소가 대상 안쪽이어야 한다 (다른 레이어에 덮여 있으면 hover 가 안 먹는다)
+        const x = r.left + r.width / 2, y = r.top + r.height / 2;
+        const top = document.elementFromPoint(x, y);
+        return {x: x, y: y, covered: !(top && p.contains(top)),
+                tag: p.tagName + "." + (p.getAttribute("class") || ""),
+                over: top ? top.tagName + "." + (top.getAttribute("class") || "") : ""};
+    }
+    return null;
+}"""
+
+KIND_LABELS = {"new": "신규", "changed": "디자인변경", "known": "기존"}
 
 
 # ─── 설정 파싱 ─────────────────────────────────────────────────────
@@ -568,6 +704,17 @@ def _state_key(sitecode: str, page_key: str) -> str:
     return f"{sitecode}|{page_key}"
 
 
+def _site_known(state: dict, sitecode: str) -> dict:
+    """이 sitecode 의 모든 페이지 기록을 합친 {링크키: {지문: info}} — GNB/Footer 요소 판정용."""
+    merged: dict = {}
+    prefix = _state_key(sitecode, "")
+    for key, bucket in state.items():
+        if key.startswith(prefix):
+            for ekey, fps in bucket.items():
+                merged.setdefault(ekey, {}).update(fps)
+    return merged
+
+
 # ─── 한 사이트 검사 ────────────────────────────────────────────────
 
 class RetryableHttpStatus(Exception):
@@ -579,10 +726,11 @@ class RetryableHttpStatus(Exception):
 
 
 def _result(sitecode, page, url, result, final_url="", keywords="", links="", capture="", detail="",
-            prev_capture="", new_elements=""):
+            prev_capture="", new_elements="", more_captures=""):
     return {
         "sitecode": sitecode, "page": page, "url": url, "final_url": final_url, "result": result,
-        "keywords": keywords, "links": links, "capture": capture, "prev_capture": prev_capture,
+        "keywords": keywords, "links": links, "capture": capture, "more_captures": more_captures,
+        "prev_capture": prev_capture,
         "new_elements": new_elements, "detail": detail,
         "checked_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     }
@@ -590,15 +738,110 @@ def _result(sitecode, page, url, result, final_url="", keywords="", links="", ca
 
 def _format_link(item: dict) -> str:
     area = " [GNB/Footer]" if item["global_ui"] else ""
+    hidden = f" {HIDDEN_TAG}" if item.get("hidden") else ""
     label = item["text"] or item["extra"]
     label = f"  ({label[:50]})" if label else ""
-    return f"{item['abs'] or item['href']}{label}{area}"
+    return f"{item['abs'] or item['href']}{label}{area}{hidden}"
+
+
+def _marks(items: list[dict]) -> list[dict]:
+    """_JS_MARK 인자 — 기존 요소는 주황, 신규·변경은 빨강."""
+    return [{"idx": it["idx"], "n": it["n"],
+             "outline": HIGHLIGHT_KNOWN_STYLE if it.get("kind") == "known" else HIGHLIGHT_STYLE,
+             "color": BADGE_COLOR_KNOWN if it.get("kind") == "known" else BADGE_COLOR_NEW}
+            for it in items]
+
+
+def _legend_lines(hit_items: list[dict], revealed: dict[int, str]) -> list[dict]:
+    """revealed = {요소 idx: 펼친 캡처 상대경로} — 숨은 요소 줄에 그 파일명을 적는다."""
+    lines = []
+    for it in hit_items[:MAX_LINKS_IN_REPORT]:
+        area = "GNB/Footer" if it["global_ui"] else "본문"
+        label = (it["text"] or it["extra"])[:60]
+        text = f"[{area}] {label + ' → ' if label else ''}{it['abs'] or it['href']}  ({KIND_LABELS.get(it.get('kind'), '')})"
+        if it.get("hidden"):
+            text += LEGEND_HIDDEN_NOTE
+            if it["idx"] in revealed:
+                text += f" → 펼친 캡처: {Path(revealed[it['idx']]).name}"
+        lines.append({"n": it["n"], "text": text,
+                      "color": BADGE_COLOR_KNOWN if it.get("kind") == "known" else BADGE_COLOR_NEW})
+    if len(hit_items) > MAX_LINKS_IN_REPORT:
+        lines.append({"n": "", "color": "", "text": f"… 외 {len(hit_items) - MAX_LINKS_IN_REPORT}건"})
+    return lines
+
+
+def _capture_ref(path: Path) -> str:
+    """리포트·기록에 적을 캡처 경로 — OUTPUT_DIR 아래면 상대경로, 밖이면 절대경로."""
+    try:
+        return path.relative_to(OUTPUT_DIR).as_posix()
+    except ValueError:
+        return str(path)
+
+
+def _capture_link(ref: str) -> str:
+    """리포트 하이퍼링크 대상 — 절대경로는 file:// URI 로 바꾼다.
+    ⚠ '#' 을 그대로 두면 Excel 이 그 뒤를 문서 내 위치로 잘라 읽는다 → %23 으로 인코딩.
+      한글은 인코딩하지 않는다 — Path.as_uri() 처럼 UTF-8 로 %인코딩하면 Excel 이 깨진 글자로 푼다 (2026-10-01 확인)."""
+    path = Path(ref)
+    if not path.is_absolute():
+        return ref
+    return "file:///" + _RE_URI_ESCAPE.sub(lambda m: f"%{ord(m.group()):02X}", path.as_posix())
+
+
+def _capture_revealed(page: Page, hit_items: list[dict], out_dir: Path, name_fmt: str, tag: str) -> dict[int, str]:
+    """숨은 hit 요소를 펼쳐(가장 가까운 보이는 조상에 hover) 뷰포트 캡처 → {요소 idx: 캡처 경로(_capture_ref)}.
+    name_fmt = 캡처 파일명 틀 — '{}' 자리에 REVEAL_CAPTURE_SUFFIX(+번호)가 들어간다."""
+    hidden = [it for it in hit_items if it.get("hidden")]
+    done: dict[int, str] = {}
+    shots = 0
+    for it in hidden:
+        if it.get("kind") == "known":       # 이미 찍은 요소 때문에 메뉴를 다시 펼쳐 찍지 않는다 (같이 보이면 테두리는 그린다)
+            continue
+        if it["idx"] in done:
+            continue
+        if shots >= REVEAL_MAX_CAPTURES:
+            break
+        try:
+            target = page.evaluate(_JS_REVEAL_TARGET, it["idx"])
+            if not target:
+                continue
+            logger.debug("[%s] hover 대상: %s%s", tag, target["tag"][:80],
+                         f" (덮고 있는 요소: {target['over'][:80]})" if target["covered"] else "")
+            page.mouse.move(0, 0)
+            page.mouse.move(target["x"], target["y"], steps=REVEAL_MOUSE_STEPS)
+            page.wait_for_timeout(REVEAL_HOVER_WAIT_MS)
+            pending = [h["idx"] for h in hidden if h["idx"] not in done]
+            shown = set(page.evaluate(_JS_VISIBLE_IDXS, pending))
+            if it["idx"] not in shown:
+                logger.debug("[%s] hover 로 안 펼쳐짐: %s", tag, it["abs"] or it["href"])
+                continue
+            shots += 1
+            suffix = REVEAL_CAPTURE_SUFFIX + ("" if shots == 1 else str(shots))
+            out = out_dir / name_fmt.format(suffix)
+            page.evaluate(_JS_MARK, {"marks": _marks([h for h in hidden if h["idx"] in shown]),
+                                     "badge": CAPTURE_BADGE, "badgeStyle": BADGE_STYLE, "temp": True})
+            page.screenshot(path=str(out))          # 펼친 상태는 뷰포트만 (전체 캡처는 스크롤하며 메뉴가 닫힌다)
+            page.evaluate(_JS_CLEAR_TEMP)
+            rel = _capture_ref(out)
+            for i in shown:
+                done[i] = rel
+        except Exception as e:
+            logger.debug("[%s] 펼친 캡처 실패: %s", tag, str(e).splitlines()[0][:150])
+    if hidden:
+        try:                                        # 메뉴를 닫고 전체 캡처로 넘어간다
+            page.mouse.move(0, 0)
+            page.wait_for_timeout(REVEAL_HOVER_WAIT_MS)
+        except Exception:
+            pass
+    return done
 
 
 def check_site(sitecode: str, page_key: str, rules, capture: bool, run_date: str,
-               known: dict | None = None) -> dict:
-    """known = 이 (sitecode, page) 의 캡처 기록 {링크키: {지문: info}} — 읽기 전용."""
+               known: dict | None = None, known_site: dict | None = None) -> dict:
+    """known = 이 (sitecode, page) 의 캡처 기록 {링크키: {지문: info}} — 읽기 전용.
+    known_site = 이 sitecode 전 페이지의 기록을 합친 것 — GNB/Footer 요소는 여기서 찾는다 (미지정 시 known)."""
     known = known or {}
+    known_site = known if known_site is None else known_site
     url = build_url(sitecode, page_key)
     tag = f"{sitecode}/{page_key}"
     session = _get_thread_session()
@@ -644,23 +887,27 @@ def check_site(sitecode: str, page_key: str, rules, capture: bool, run_date: str
 
         # ── 요소별 디자인 지문 → 이미 캡처한 요소인지 판정 ──
         descs = page.evaluate(_JS_DESCRIBE, [it["idx"] for it in hit_items])
+        for n, (it, desc) in enumerate(zip(hit_items, descs), start=1):
+            it["n"] = n                                              # 캡처 배지·범례 번호
+            it["hidden"] = not (desc or {}).get("visible", True)     # 접힌 메뉴 안 등 화면에 안 보임
         new_elems: dict[tuple[str, str], dict] = {}     # (링크키, 지문) → 신규/변경 정보
-        new_idxs, known_idxs = [], []
         link_kind: dict[str, str] = {}                  # 링크키 → "new" / "changed" / "known"
         prev_captures: list[tuple[str, str]] = []       # (first_seen, capture)
         for it, desc in zip(hit_items, descs):
             ekey = element_key(it["abs"] or it["href"])
             fp, design = design_fingerprint(desc or {})
-            seen_fps = known.get(ekey, {})
+            # GNB/Footer 는 페이지 공통 — 다른 페이지에서 이미 찍었으면 다시 안 찍는다
+            seen_fps = (known_site if it["global_ui"] else known).get(ekey, {})
             if fp in seen_fps:
-                known_idxs.append(it["idx"])
+                it["kind"] = "known"
                 info = seen_fps[fp]
                 prev_captures.append((info.get("first_seen", ""), info.get("capture", "")))
                 link_kind.setdefault(ekey, "known")
                 continue
             kind = "changed" if seen_fps else "new"
-            new_idxs.append(it["idx"])
-            new_elems.setdefault((ekey, fp), {"key": ekey, "fp": fp, "kind": kind, "design": design})
+            it["kind"] = kind
+            new_elems.setdefault((ekey, fp), {"key": ekey, "fp": fp, "kind": kind, "design": design,
+                                              "idxs": []})["idxs"].append(it["idx"])
             if link_kind.get(ekey) != "changed":
                 link_kind[ekey] = kind
 
@@ -676,23 +923,57 @@ def check_site(sitecode: str, page_key: str, rules, capture: bool, run_date: str
             matched_links.append(_format_link(it) + tag_txt)
 
         capture_rel = ""
+        more_captures: list[str] = []
         if capture and new_elems:
+            main_rel = ""
+            revealed: dict[int, str] = {}
+            shots: list[str] = []
+            hidden_idxs = {it["idx"] for it in hit_items if it["hidden"]}
+            new_idxs = {i for el in new_elems.values() for i in el["idxs"]}
             try:
-                page.evaluate(_JS_HIGHLIGHT, {"idxs": known_idxs, "style": HIGHLIGHT_KNOWN_STYLE})
-                page.evaluate(_JS_HIGHLIGHT, {"idxs": new_idxs, "style": HIGHLIGHT_STYLE})
-                rel = Path(CAPTURE_SUBDIR) / run_date / f"{sitecode}_{page_key}_{datetime.now():%H%M}.png"
-                out = OUTPUT_DIR / rel
-                out.parent.mkdir(parents=True, exist_ok=True)
-                page.screenshot(path=str(out), full_page=CAPTURE_FULL_PAGE)
-                capture_rel = rel.as_posix()
+                # 날짜 폴더 없이 sitecode 폴더에 모은다 (1회성 캡처라 날짜별로 나눌 만큼 쌓이지 않는다)
+                # 파일명 = <sitecode>_<page>[_menu]_<YYMMDD>_<HHMM>.png — 날짜·시각은 항상 맨 뒤
+                out_dir = CAPTURE_DIR / sitecode
+                name_fmt = f"{sitecode}_{page_key}{{}}_{datetime.now():{CAPTURE_TIME_FORMAT}}.png"
+                out = out_dir / name_fmt.format("")
+                out_dir.mkdir(parents=True, exist_ok=True)
+                # ⚠ 순서: 펼친 캡처 → 범례 → 배지 → 전체 캡처.
+                #   범례를 넣어 본문이 밀린 뒤에는 GNB 메뉴가 hover 로 안 열린다 (2026-10-01 확인).
+                #   배지 좌표도 범례가 들어간 뒤에 잡아야 맞는다.
+                if CAPTURE_REVEAL_HIDDEN:
+                    revealed = _capture_revealed(page, hit_items, out_dir, name_fmt, tag)
+                # 전체 캡처는 새 요소가 화면에 보일 때만 찍는다. 새 요소가 전부 숨은 요소이고 펼친 캡처에
+                # 잡혔으면 전체 캡처에는 테두리가 하나도 없으니 생략한다. (하나도 못 펼쳤으면 범례라도 남기려고 찍는다)
+                if (new_idxs - hidden_idxs) or not (new_idxs & set(revealed)):
+                    if CAPTURE_LEGEND:
+                        page.evaluate(_JS_LEGEND, {
+                            "title": f"{LEGEND_TITLE} · {tag} · hit {len(hit_items)}건 · 키워드: {', '.join(matched_rules)}",
+                            "lines": _legend_lines(hit_items, revealed), "boxStyle": LEGEND_BOX_STYLE})
+                    page.evaluate(_JS_MARK, {"marks": _marks([it for it in hit_items if not it["hidden"]]),
+                                             "badge": CAPTURE_BADGE, "badgeStyle": BADGE_STYLE, "temp": False})
+                    page.screenshot(path=str(out), full_page=CAPTURE_FULL_PAGE)
+                    main_rel = _capture_ref(out)
+                shots = list(dict.fromkeys(([main_rel] if main_rel else []) + list(revealed.values())))
             except Exception as e:
                 logger.warning("⚠️ %s: 캡처 실패 — %s", tag, e)
+            if shots:
+                # 요소별 대표 캡처: 보이는 요소 = 전체 캡처 / 숨은 요소 = 펼친 캡처(있으면)
+                for el in new_elems.values():
+                    idxs = el.pop("idxs")
+                    shown = [revealed[i] for i in idxs if i in revealed]
+                    el["capture"] = (shown[0] if shown and all(i in hidden_idxs for i in idxs) else main_rel) or shots[0]
+                firsts = [el["capture"] for el in new_elems.values()]
+                capture_rel = main_rel if main_rel in firsts else firsts[0]
+                more_captures = [c for c in shots if c != capture_rel]
+        for el in new_elems.values():
+            el.pop("idxs", None)
 
         prev = max((c for c in prev_captures if c[1]), default=("", ""))[1]
         return _result(sitecode, page_key, url, RESULT_HIT, page.url,
                        keywords=", ".join(matched_rules),
                        links="\n".join(matched_links),
                        capture=capture_rel,
+                       more_captures="\n".join(more_captures),
                        prev_capture=prev,
                        # 캡처에 성공했을 때만 기록 대상으로 넘긴다 (못 찍었으면 다음 실행에서 다시 시도)
                        new_elements=json.dumps(list(new_elems.values()), ensure_ascii=False) if capture_rel else "",
@@ -705,14 +986,14 @@ def check_site(sitecode: str, page_key: str, rules, capture: bool, run_date: str
 
 
 def check_site_with_retry(sitecode: str, page_key: str, rules, capture: bool, run_date: str,
-                          known: dict | None = None) -> dict:
+                          known: dict | None = None, known_site: dict | None = None) -> dict:
     last_error = ""
     last_status = None
     for attempt in range(RETRY_COUNT + 1):
         if attempt:
             time.sleep(RETRY_DELAY_SEC)
         try:
-            return check_site(sitecode, page_key, rules, capture, run_date, known)
+            return check_site(sitecode, page_key, rules, capture, run_date, known, known_site)
         except RetryableHttpStatus as e:
             last_status, last_error = e.status, f"HTTP {e.status}"
             logger.debug("[%s/%s] attempt %d: HTTP %s → retry", sitecode, page_key, attempt + 1, e.status)
@@ -841,6 +1122,7 @@ def write_daily_report(csv_path: Path, run_date: str, target_keys: list[tuple[st
                 links = links[:MAX_LINKS_IN_REPORT] + [f"… 외 {len(links) - MAX_LINKS_IN_REPORT}건"]
             if v.get("capture"):
                 links.append(f"📷 새 캡처: {v['capture']}")
+                links += [f"📷 추가 캡처: {c}" for c in (v.get("more_captures") or "").split("\n") if c]
             elif v.get("prev_capture"):
                 links.append(f"📷 기존 캡처: {v['prev_capture']}")
             if result.startswith(RESULT_FAIL_PREFIX) and v.get("detail"):
@@ -864,7 +1146,7 @@ def write_daily_report(csv_path: Path, run_date: str, target_keys: list[tuple[st
                 c.fill = fill_hit
             snap = v.get("capture") or v.get("prev_capture")
             if snap:
-                c_res.hyperlink = snap              # 리포트 기준 상대경로 → 클릭하면 캡처가 열린다
+                c_res.hyperlink = _capture_link(snap)   # 클릭하면 캡처가 열린다 (리포트 기준 상대경로 또는 file:// URI)
                 c_res.font = Font(bold=True, underline="single", color="006100")
             else:
                 c_res.font = Font(bold=True, color="006100")
@@ -947,31 +1229,43 @@ def run(sitecodes: list[str], pages: list[str], capture: bool, run_date: str) ->
     # 캡처 기록 — 워커에는 읽기 전용 스냅샷을 주고, 갱신·저장은 메인 스레드에서만 한다.
     # (같은 (sitecode, page) 는 한 실행에서 한 번만 돌므로 스냅샷으로 충분하다)
     capture_state = load_capture_state()
+    # GNB/Footer 판정용 sitecode 단위 기록 — 워커가 자기 sitecode 것만 고친다 (앞 페이지에서 찍은 요소를 다음 페이지에 알림)
+    site_known = {sc: _site_known(capture_state, sc) for sc in sitecodes}
     completed = False
     hits = []
     new_captures = 0
     # ⚠ ThreadPoolExecutor 를 쓰지 않는다 — Playwright sync 객체는 **만든 스레드에서만** 닫을 수 있어
     #   메인 스레드에서 세션을 정리하면 greenlet.error 로 실패하고 Chrome 이 남는다(2026-09-29 확인).
     #   워커 스레드가 큐를 비운 뒤 자기 세션을 직접 닫고, 결과는 result 큐로 메인 스레드에 넘긴다.
+    # 큐 단위는 sitecode — 한 sitecode 의 페이지들은 같은 워커가 CHECK_PAGES 순서대로 이어서 돈다.
+    # (home·offer 를 다른 워커가 동시에 돌리면 같은 GNB 요소를 서로 모른 채 둘 다 찍는다)
     job_q: queue.Queue = queue.Queue()
-    for job in jobs:
-        job_q.put(job)
+    for sc in sitecodes:
+        job_q.put(sc)
     result_q: queue.Queue = queue.Queue()
 
     def _worker() -> None:
         try:
             while True:
                 try:
-                    sc, pg = job_q.get_nowait()
+                    sc = job_q.get_nowait()
                 except queue.Empty:
                     break
-                try:
-                    row = check_site_with_retry(sc, pg, rules, capture, run_date,
-                                                capture_state.get(_state_key(sc, pg), {}))
-                except Exception as e:          # 세션 기동 실패 등 — 결과는 반드시 한 줄 남긴다
-                    row = _result(sc, pg, build_url(sc, pg), f"{RESULT_FAIL_PREFIX}(error)",
-                                  detail=f"{type(e).__name__}: {str(e).splitlines()[0][:150]}")
-                result_q.put(row)
+                known_site = site_known[sc]
+                for pg in pages:
+                    try:
+                        row = check_site_with_retry(sc, pg, rules, capture, run_date,
+                                                    capture_state.get(_state_key(sc, pg), {}), known_site)
+                    except Exception as e:          # 세션 기동 실패 등 — 결과는 반드시 한 줄 남긴다
+                        row = _result(sc, pg, build_url(sc, pg), f"{RESULT_FAIL_PREFIX}(error)",
+                                      detail=f"{type(e).__name__}: {str(e).splitlines()[0][:150]}")
+                    if row["new_elements"]:
+                        for el in json.loads(row["new_elements"]):
+                            known_site.setdefault(el["key"], {})[el["fp"]] = {
+                                "first_seen": datetime.now().strftime("%Y-%m-%d"),
+                                "capture": el.get("capture") or row["capture"],
+                            }
+                    result_q.put(row)
         finally:
             _close_thread_session()
 
@@ -988,7 +1282,7 @@ def run(sitecodes: list[str], pages: list[str], capture: bool, run_date: str) ->
                 for el in json.loads(row["new_elements"]):
                     bucket.setdefault(el["key"], {})[el["fp"]] = {
                         "first_seen": datetime.now().strftime("%Y-%m-%d"),
-                        "kind": el["kind"], "capture": row["capture"], "design": el["design"],
+                        "kind": el["kind"], "capture": el.get("capture") or row["capture"], "design": el["design"],
                     }
                 save_capture_state(capture_state)
                 new_captures += 1
