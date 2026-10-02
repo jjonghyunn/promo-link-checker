@@ -1,5 +1,8 @@
 # promo_link_checker_v1.2.py
-# 2026-10-01  Jonghyun Park w/ Claude
+# 2026-10-02  Jonghyun Park w/ Claude
+# updated: 2026-10-02 — 쿠키 배너 동의 버튼을 여러 종류로 인식(COOKIE_CONSENT_SELECTORS), 남은 배너는 캡처 직전에 숨긴다
+#                       (kz_kz · kz_ru 의 자체 cookie-bar 가 안 닫혀 hit 요소를 가린 채 찍히던 문제).
+#                       캡처 생략 판정 때 기존 캡처 파일이 실제로 있는지도 확인 — 없으면 다시 찍는다 (VERIFY_CAPTURE_EXISTS)
 # v1.2 (2026-10-01): 캡처 중복 제거 — 새 요소가 전부 접힌 메뉴 안이면 전체 캡처를 생략하고 펼친 캡처(_menu.png)만 남긴다.
 #                    GNB/Footer 요소는 페이지(home·offer) 공통이라 sitecode 당 한 번만 캡처한다.
 #                    캡처 저장 위치 = CAPTURE_DIR(절대경로)/<sitecode>/ (날짜 폴더 없음), 파일명 맨 뒤에 찍은 날짜·시각(_YYMMDD_HHMM)
@@ -222,6 +225,8 @@ CAPTURE_FULL_PAGE: bool = True
 # 단 그 요소의 디자인 지문(아래 FINGERPRINT_FIELDS)이 바뀌면 한 번 더 찍는다. 새 링크는 당연히 찍는다.
 # 기록 파일을 지우면 처음부터 다시 캡처한다.
 CAPTURE_STATE_NAME: str = "_capture_state.json"
+# True 면 기록에 있는 요소라도 그 캡처 파일이 실제로 있는지 확인하고, 없으면 다시 찍는다 (리포트 태그 ♻재캡처)
+VERIFY_CAPTURE_EXISTS: bool = True
 # 디자인 지문에 넣을 항목:
 #   size    = 요소 크기(FINGERPRINT_SIZE_STEP px 단위로 반올림)
 #   classes = class 목록 (FINGERPRINT_CLASS_IGNORE 에 걸리는 상태 class 는 제외)
@@ -283,7 +288,13 @@ BROWSER_USER_AGENT: str | None = (
     "(KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36"
 )
 BROWSER_VIEWPORT: dict = {"width": 1440, "height": 900}
-COOKIE_CONSENT_SELECTOR: str = "#truste-consent-button"
+# 쿠키 배너 동의 버튼 — 사이트마다 배너가 달라서 여러 개를 둔다 (먼저 보이는 것 하나를 누른다)
+COOKIE_CONSENT_SELECTORS: list[str] = [
+    "#truste-consent-button",                      # TrustArc 배너 (uk 등 대부분)
+    ".cookie-bar [an-ac='cookie bar:accept']",     # 자체 cookie-bar (kz_kz · kz_ru 등)
+]
+# 캡처 직전에 숨길 요소 — 동의 버튼을 못 눌러 배너가 남아도 hit 요소를 가리지 않게 한다. 빈 문자열이면 안 숨긴다.
+CAPTURE_HIDE_SELECTOR: str = "#truste-consent-track, .cookie-bar"
 COOKIE_BANNER_WAIT_MS: int = 3_000
 COOKIE_RELOAD_TIMEOUT_MS: int = 3_000
 # 레이지 로딩 링크를 띄우기 위한 스크롤 (한 화면씩 내리며 잠깐 대기)
@@ -460,7 +471,7 @@ _JS_REVEAL_TARGET = "(idx) => {" + _JS_VISIBLE_FN + r"""
     return null;
 }"""
 
-KIND_LABELS = {"new": "신규", "changed": "디자인변경", "known": "기존"}
+KIND_LABELS = {"new": "신규", "changed": "디자인변경", "recapture": "재캡처 — 기존 캡처 파일 없음", "known": "기존"}
 
 
 # ─── 설정 파싱 ─────────────────────────────────────────────────────
@@ -602,14 +613,17 @@ def _close_thread_session() -> None:
 
 
 def _dismiss_cookie_popup(page: Page, sitecode: str) -> None:
+    if not COOKIE_CONSENT_SELECTORS:
+        return
+    # 셀렉터를 콤마로 묶어 한 번만 기다린다 (셀렉터 수만큼 대기가 늘지 않게)
     try:
-        page.wait_for_selector(COOKIE_CONSENT_SELECTOR, timeout=COOKIE_BANNER_WAIT_MS)
+        button = page.wait_for_selector(", ".join(COOKIE_CONSENT_SELECTORS), timeout=COOKIE_BANNER_WAIT_MS)
     except Exception:
         return
     # 동의 클릭이 같은 URL 재로드를 일으킬 수 있어 클릭 **전에** 네비게이션 대기를 건다.
     try:
         with page.expect_navigation(wait_until="load", timeout=COOKIE_RELOAD_TIMEOUT_MS):
-            page.click(COOKIE_CONSENT_SELECTOR)
+            button.click()
     except PlaywrightTimeoutError:
         pass
     except Exception as e:
@@ -778,6 +792,17 @@ def _capture_ref(path: Path) -> str:
         return str(path)
 
 
+def _capture_exists(ref: str) -> bool:
+    """기록에 적힌 캡처(_capture_ref 형식 — OUTPUT_DIR 기준 상대경로 또는 절대경로)가 실제로 있는지."""
+    if not ref:
+        return False
+    path = Path(ref)
+    try:
+        return (path if path.is_absolute() else OUTPUT_DIR / path).is_file()
+    except OSError:
+        return False
+
+
 def _capture_link(ref: str) -> str:
     """리포트 하이퍼링크 대상 — 절대경로는 file:// URI 로 바꾼다.
     ⚠ '#' 을 그대로 두면 Excel 이 그 뒤를 문서 내 위치로 잘라 읽는다 → %23 으로 인코딩.
@@ -891,20 +916,21 @@ def check_site(sitecode: str, page_key: str, rules, capture: bool, run_date: str
             it["n"] = n                                              # 캡처 배지·범례 번호
             it["hidden"] = not (desc or {}).get("visible", True)     # 접힌 메뉴 안 등 화면에 안 보임
         new_elems: dict[tuple[str, str], dict] = {}     # (링크키, 지문) → 신규/변경 정보
-        link_kind: dict[str, str] = {}                  # 링크키 → "new" / "changed" / "known"
+        link_kind: dict[str, str] = {}                  # 링크키 → "new" / "changed" / "recapture" / "known"
         prev_captures: list[tuple[str, str]] = []       # (first_seen, capture)
         for it, desc in zip(hit_items, descs):
             ekey = element_key(it["abs"] or it["href"])
             fp, design = design_fingerprint(desc or {})
             # GNB/Footer 는 페이지 공통 — 다른 페이지에서 이미 찍었으면 다시 안 찍는다
             seen_fps = (known_site if it["global_ui"] else known).get(ekey, {})
-            if fp in seen_fps:
+            # 기록에 있어도 그 캡처 파일이 실제로 없으면(지워짐·옮겨짐) 다시 찍는다
+            if fp in seen_fps and (not VERIFY_CAPTURE_EXISTS or _capture_exists(seen_fps[fp].get("capture", ""))):
                 it["kind"] = "known"
                 info = seen_fps[fp]
                 prev_captures.append((info.get("first_seen", ""), info.get("capture", "")))
                 link_kind.setdefault(ekey, "known")
                 continue
-            kind = "changed" if seen_fps else "new"
+            kind = "recapture" if fp in seen_fps else "changed" if seen_fps else "new"
             it["kind"] = kind
             new_elems.setdefault((ekey, fp), {"key": ekey, "fp": fp, "kind": kind, "design": design,
                                               "idxs": []})["idxs"].append(it["idx"])
@@ -919,7 +945,8 @@ def check_site(sitecode: str, page_key: str, rules, capture: bool, run_date: str
             if ekey in seen_links:
                 continue
             seen_links.add(ekey)
-            tag_txt = {"new": "  🆕신규", "changed": "  🔄디자인변경"}.get(link_kind.get(ekey, ""), "")
+            tag_txt = {"new": "  🆕신규", "changed": "  🔄디자인변경",
+                       "recapture": "  ♻재캡처"}.get(link_kind.get(ekey, ""), "")
             matched_links.append(_format_link(it) + tag_txt)
 
         capture_rel = ""
@@ -937,6 +964,8 @@ def check_site(sitecode: str, page_key: str, rules, capture: bool, run_date: str
                 name_fmt = f"{sitecode}_{page_key}{{}}_{datetime.now():{CAPTURE_TIME_FORMAT}}.png"
                 out = out_dir / name_fmt.format("")
                 out_dir.mkdir(parents=True, exist_ok=True)
+                if CAPTURE_HIDE_SELECTOR:
+                    page.add_style_tag(content=f"{CAPTURE_HIDE_SELECTOR} {{ display: none !important; }}")
                 # ⚠ 순서: 펼친 캡처 → 범례 → 배지 → 전체 캡처.
                 #   범례를 넣어 본문이 밀린 뒤에는 GNB 메뉴가 hover 로 안 열린다 (2026-10-01 확인).
                 #   배지 좌표도 범례가 들어간 뒤에 잡아야 맞는다.
