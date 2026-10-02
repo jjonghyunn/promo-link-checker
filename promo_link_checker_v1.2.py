@@ -2,7 +2,8 @@
 # 2026-10-02  Jonghyun Park w/ Claude
 # updated: 2026-10-02 — 쿠키 배너 동의 버튼을 여러 종류로 인식(COOKIE_CONSENT_SELECTORS), 남은 배너는 캡처 직전에 숨긴다
 #                       (kz_kz · kz_ru 의 자체 cookie-bar 가 안 닫혀 hit 요소를 가린 채 찍히던 문제).
-#                       캡처 생략 판정 때 기존 캡처 파일이 실제로 있는지도 확인 — 없으면 다시 찍는다 (VERIFY_CAPTURE_EXISTS)
+#                       캡처 생략 판정 때 기존 캡처 파일이 실제로 있는지도 확인 — 없으면 다시 찍는다 (VERIFY_CAPTURE_EXISTS).
+#                       테두리·배지 색은 신규/기존 구분 없이 한 가지(빨강)로 통일
 # v1.2 (2026-10-01): 캡처 중복 제거 — 새 요소가 전부 접힌 메뉴 안이면 전체 캡처를 생략하고 펼친 캡처(_menu.png)만 남긴다.
 #                    GNB/Footer 요소는 페이지(home·offer) 공통이라 sitecode 당 한 번만 캡처한다.
 #                    캡처 저장 위치 = CAPTURE_DIR(절대경로)/<sitecode>/ (날짜 폴더 없음), 파일명 맨 뒤에 찍은 날짜·시각(_YYMMDD_HHMM)
@@ -237,13 +238,14 @@ FINGERPRINT_SIZE_STEP: int = 20
 # 캐러셀·레이지 로딩이 로드할 때마다 바꾸는 상태 class — 지문에서 뺀다 (정규식, 대소문자 무시)
 FINGERPRINT_CLASS_IGNORE: str = r"active|current|visible|hidden|loaded|loading|lazy|hover|focus|prev|next|duplicate|selected|animat|is-|swiper-slide-"
 # 캡처 시 테두리: 새로 찍는 이유가 된 요소(신규·디자인 변경) / 이미 찍은 적 있는 요소
+# 기본은 둘을 같은 색으로 둔다 (구분은 범례의 신규/디자인변경/기존 표기로). 색으로 나누려면 KNOWN 쪽 값을 바꾼다.
 HIGHLIGHT_STYLE: str = "4px solid red"
-HIGHLIGHT_KNOWN_STYLE: str = "3px dashed orange"
+HIGHLIGHT_KNOWN_STYLE: str = "4px solid red"
 # ── 캡처에서 hit 요소 찾기 쉽게 ──
 # 번호 배지: 테두리 왼쪽 위에 1·2·3… 번호를 붙인다 (범례 박스의 번호와 같다)
 CAPTURE_BADGE: bool = True
 BADGE_COLOR_NEW: str = "red"
-BADGE_COLOR_KNOWN: str = "orange"
+BADGE_COLOR_KNOWN: str = "red"
 BADGE_STYLE: str = ("min-width:24px;height:24px;padding:0 7px;border-radius:12px;color:#fff;"
                     "font:700 15px/24px Arial,sans-serif;text-align:center;box-shadow:0 0 0 2px #fff")
 # 범례 박스: 캡처 맨 위에 "번호 [영역] 링크 텍스트 → URL (신규/디자인변경/기존)" 을 한 줄씩 적는다
@@ -759,7 +761,7 @@ def _format_link(item: dict) -> str:
 
 
 def _marks(items: list[dict]) -> list[dict]:
-    """_JS_MARK 인자 — 기존 요소는 주황, 신규·변경은 빨강."""
+    """_JS_MARK 인자 — 기존 요소는 HIGHLIGHT_KNOWN_STYLE·BADGE_COLOR_KNOWN, 신규·변경은 HIGHLIGHT_STYLE·BADGE_COLOR_NEW."""
     return [{"idx": it["idx"], "n": it["n"],
              "outline": HIGHLIGHT_KNOWN_STYLE if it.get("kind") == "known" else HIGHLIGHT_STYLE,
              "color": BADGE_COLOR_KNOWN if it.get("kind") == "known" else BADGE_COLOR_NEW}
