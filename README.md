@@ -1,5 +1,5 @@
 # promo_link_checker  
-<sub>2026-10-02  Jonghyun Park w/ Claude</sub>  
+<sub>2026-10-06  Jonghyun Park w/ Claude</sub>  
 국가별 **home · 프로모션(offer) 페이지의 클릭 가능한 요소** 중에 타겟 캠페인 링크가 걸려 있는지 매일 확인하고,
 결과를 `_daily_report.xlsx` 에 하루 1블록씩 누적하는 도구. 캡처는 **처음 보는 hit 요소, 또는 디자인이
 바뀐 요소가 있을 때만 1회** 찍는다(매일 누적 캡처하지 않음).
@@ -37,6 +37,7 @@ summer sale
 | `…/model-x/buy/` (텍스트 "Summer Sale") | ❌ | **링크 텍스트·콜값 속성은 매칭에 안 쓴다** (리포트 설명용) |
 | `partner.example.com/summer/megasales/` | ❌ | 두 단어가 **다른 구간** |
 | `…/offer/?cid=summer-sale` | ❌ | **쿼리 파라미터·#fragment 제외** |
+| `…/assets/terms_summer_sale_2026.pdf` | ❌ | **`.pdf` 링크 제외** (`EXCLUDE_LINK_EXTENSIONS`) — 경로에 캠페인명이 든 약관·고지 PDF 오탐 방지 |
 | `…/offer/pay-sale/` | ❌ | **도메인(host) 제외** — 넣으면 모든 링크가 브랜드명을 가져 `sale` 만으로 걸린다 |
 
 ### CHECK_PAGES — 볼 페이지

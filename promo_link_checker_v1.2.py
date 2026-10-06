@@ -1,14 +1,11 @@
 # promo_link_checker_v1.2.py
-# 2026-10-02  Jonghyun Park w/ Claude
+# 2026-10-06  Jonghyun Park w/ Claude
+# updated: 2026-10-06 — 링크 URL 경로가 .pdf 로 끝나면 hit 에서 제외 (EXCLUDE_LINK_EXTENSIONS) —
+#                       경로에 캠페인명이 들어간 약관·고지 PDF 가 hit 로 잡히던 오탐
 # updated: 2026-10-02 — 쿠키 배너 동의 버튼을 여러 종류로 인식(COOKIE_CONSENT_SELECTORS), 남은 배너는 캡처 직전에 숨긴다
 #                       (kz_kz · kz_ru 의 자체 cookie-bar 가 안 닫혀 hit 요소를 가린 채 찍히던 문제).
 #                       캡처 생략 판정 때 기존 캡처 파일이 실제로 있는지도 확인 — 없으면 다시 찍는다 (VERIFY_CAPTURE_EXISTS).
 #                       테두리·배지 색은 신규/기존 구분 없이 한 가지(빨강)로 통일
-# v1.2 (2026-10-01): 캡처 중복 제거 — 새 요소가 전부 접힌 메뉴 안이면 전체 캡처를 생략하고 펼친 캡처(_menu.png)만 남긴다.
-#                    GNB/Footer 요소는 페이지(home·offer) 공통이라 sitecode 당 한 번만 캡처한다.
-#                    캡처 저장 위치 = CAPTURE_DIR(절대경로)/<sitecode>/ (날짜 폴더 없음), 파일명 맨 뒤에 찍은 날짜·시각(_YYMMDD_HHMM)
-# v1.1 (2026-10-01): 캡처에 범례 박스·번호 배지 추가, 화면에 안 보이는 hit 요소(접힌 GNB 메뉴 안 등)는
-#                    메뉴를 펼쳐 추가 캡처(_menu.png), 리포트에 [숨김] 태그
 # (이전 버전 이력은 git history / GitHub Releases 참조 — 헤더에는 최근 2개 항목만 남긴다)
 r"""
 promo_link_checker — 국가별 홈 · 프로모션(offer) 페이지의 클릭 가능한 요소 중에
@@ -29,6 +26,7 @@ promo_link_checker — 국가별 홈 · 프로모션(offer) 페이지의 클릭 
     예) "summer sale" → /summer-sale/ · /summer_sale/ · /summer-big-sale/ · /summersale/ hit
         /summer/megasales/ (두 구간에 나뉨) · ?campaign=summer-sale (쿼리) · 링크 텍스트만 일치 → 제외
   host(도메인)·쿼리 파라미터·#fragment 는 보지 않는다. 여러 줄이면 OR.
+  경로가 EXCLUDE_LINK_EXTENSIONS(기본 .pdf)로 끝나는 링크는 키워드가 맞아도 제외한다 (약관·고지 PDF).
 
 사용 예:
   python promo_link_checker_v1.2.py
@@ -203,6 +201,9 @@ SITE_OVERRIDES: dict[str, dict] = {
 }
 # 리포트에 링크 설명으로 적을 속성 (보이는 텍스트가 없는 이미지 배너용). ⚠ 매칭에는 쓰지 않는다.
 TEXT_ATTRIBUTES: list[str] = ["aria-label", "title"]
+# 링크 URL 경로가 이 확장자로 끝나면 키워드가 맞아도 hit 에서 뺀다 (대소문자 무시).
+# 경로에 캠페인명이 들어간 약관·고지 PDF 가 hit 로 잡히는 오탐 방지. 빈 리스트면 제외 안 함.
+EXCLUDE_LINK_EXTENSIONS: list[str] = [".pdf"]
 # "클릭 가능한 요소" 셀렉터
 CLICKABLE_SELECTOR: str = "a[href], area[href]"
 # True 면 GNB/Footer 안 링크는 hit 에서 뺀다 (False = 페이지 전체. 리포트엔 영역 태그가 붙는다)
@@ -527,6 +528,14 @@ def match_rules(url: str, rules: list[tuple[str, list[str]]]) -> list[str]:
     segments = path_segments(url)
     return [line for line, words in rules
             if any(all(w in seg for w in words) for seg in segments)]
+
+
+def is_excluded_link(url: str) -> bool:
+    """URL 경로가 EXCLUDE_LINK_EXTENSIONS 로 끝나면 True (쿼리·#fragment 는 무시)."""
+    if not EXCLUDE_LINK_EXTENSIONS:
+        return False
+    path = unquote(urlparse(url or "").path).lower().rstrip("/")
+    return path.endswith(tuple(e.lower() for e in EXCLUDE_LINK_EXTENSIONS))
 
 
 # ─── URL ───────────────────────────────────────────────────────────
@@ -900,7 +909,10 @@ def check_site(sitecode: str, page_key: str, rules, capture: bool, run_date: str
             if EXCLUDE_GLOBAL_UI and item["global_ui"]:
                 continue
             # 상대경로도 브라우저가 해석한 절대 URL(abs)로 본다
-            hits = match_rules(item["abs"] or item["href"], rules)
+            link = item["abs"] or item["href"]
+            if is_excluded_link(link):
+                continue
+            hits = match_rules(link, rules)
             if not hits:
                 continue
             hit_items.append(item)
