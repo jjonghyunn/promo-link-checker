@@ -1,11 +1,11 @@
 # promo_link_checker_v1.2.py
-# 2026-10-06  Jonghyun Park w/ Claude
+# 2026-10-07  Jonghyun Park w/ Claude
+# updated: 2026-10-07 — 숨김 판정된 본문 hit 요소를 하나씩 화면 가운데로 스크롤해 1.2초 기다린 뒤 다시 판정 (RESCROLL_HIDDEN) —
+#                       KV 텍스트·CTA 가 화면에 머물러야 페이드인되는데 빠른 스크롤이 건너뛰어 [숨김] 처리되고
+#                       테두리가 빠지던 문제. 전체 캡처 직전 화면 높이를 늘려 두고 1.5초 대기(CAPTURE_SETTLE_MS) —
+#                       KV 고화질 이미지가 그려지기 전에 찍혀 흐릿하던 문제
 # updated: 2026-10-06 — 링크 URL 경로가 .pdf 로 끝나면 hit 에서 제외 (EXCLUDE_LINK_EXTENSIONS) —
 #                       경로에 캠페인명이 들어간 약관·고지 PDF 가 hit 로 잡히던 오탐
-# updated: 2026-10-02 — 쿠키 배너 동의 버튼을 여러 종류로 인식(COOKIE_CONSENT_SELECTORS), 남은 배너는 캡처 직전에 숨긴다
-#                       (kz_kz · kz_ru 의 자체 cookie-bar 가 안 닫혀 hit 요소를 가린 채 찍히던 문제).
-#                       캡처 생략 판정 때 기존 캡처 파일이 실제로 있는지도 확인 — 없으면 다시 찍는다 (VERIFY_CAPTURE_EXISTS).
-#                       테두리·배지 색은 신규/기존 구분 없이 한 가지(빨강)로 통일
 # (이전 버전 이력은 git history / GitHub Releases 참조 — 헤더에는 최근 2개 항목만 남긴다)
 r"""
 promo_link_checker — 국가별 홈 · 프로모션(offer) 페이지의 클릭 가능한 요소 중에
@@ -305,6 +305,16 @@ SCROLL_PAUSE_MS: int = 400
 SCROLL_MAX_STEPS: int = 60
 # 스크롤 후 추가 요청이 잦아들기를 기다리는 상한
 SETTLE_NETWORKIDLE_MS: int = 8_000
+# 숨김으로 판정된 본문 hit 요소를 하나씩 화면 가운데로 스크롤해 기다린 뒤 다시 판정한다.
+# KV 텍스트·CTA 는 화면 안에 잠깐 머물러야 페이드인되는데, 위 스크롤은 빨라서 건너뛸 때가 있다
+# (그러면 [숨김] 처리돼 테두리가 빠진다. 페이지 전체를 더 기다려도 안 나타난다).
+# 크기 0 인 요소(display:none 복제본 등)와 GNB/Footer 요소(메뉴 펼침 캡처로 처리)는 건너뛴다.
+RESCROLL_HIDDEN: bool = True
+RESCROLL_HIDDEN_WAIT_MS: int = 1_200
+RESCROLL_HIDDEN_MAX: int = 10
+# 전체 캡처 직전에 화면 높이를 페이지 전체로 늘려 두고 기다리는 시간. 전체 캡처가 화면 높이를 바꾸는 순간 KV 가
+# 이미지를 다시 골라 저화질 미리보기가 찍히던 문제 (캡처가 흐릿하게 나왔다). 0 이면 이 단계를 건너뛴다.
+CAPTURE_SETTLE_MS: int = 1_500
 # 접근 실패 재시도 횟수 — 타임아웃·브라우저 오류, 그리고 아래 RETRY_HTTP_STATUS. 404·리다이렉트는 재시도 안 함.
 RETRY_COUNT: int = 2
 # 이 HTTP 상태면 새 브라우저 컨텍스트로 잠깐 쉬었다 다시 연다.
@@ -872,6 +882,28 @@ def _capture_revealed(page: Page, hit_items: list[dict], out_dir: Path, name_fmt
     return done
 
 
+def _rescroll_hidden(page: Page, hit_items: list[dict], descs: list, tag: str) -> list:
+    """숨김 판정된 본문 hit 요소를 화면 가운데로 스크롤해 기다린 뒤(페이드인 애니메이션) 다시 판정 → 새 descs."""
+    targets = [it["idx"] for it, d in zip(hit_items, descs)
+               if d and not d.get("visible", True) and not it["global_ui"]
+               and d.get("w", 0) >= 1 and d.get("h", 0) >= 1][:RESCROLL_HIDDEN_MAX]
+    if not targets:
+        return descs
+    try:
+        for i in targets:
+            page.evaluate("i => { const el = document.querySelector(`[data-plc-idx=\"${i}\"]`);"
+                          " if (el) el.scrollIntoView({block: 'center'}); }", i)
+            page.wait_for_timeout(RESCROLL_HIDDEN_WAIT_MS)
+        page.evaluate("() => window.scrollTo(0, 0)")
+        new = page.evaluate(_JS_DESCRIBE, [it["idx"] for it in hit_items])
+    except Exception as e:
+        logger.debug("[%s] 숨김 요소 재스크롤 실패: %s", tag, str(e).splitlines()[0][:150])
+        return descs
+    shown = sum(1 for o, n in zip(descs, new) if o and n and not o.get("visible", True) and n.get("visible"))
+    logger.debug("[%s] 숨김 요소 재스크롤 %d개 → %d개 보임", tag, len(targets), shown)
+    return new
+
+
 def check_site(sitecode: str, page_key: str, rules, capture: bool, run_date: str,
                known: dict | None = None, known_site: dict | None = None) -> dict:
     """known = 이 (sitecode, page) 의 캡처 기록 {링크키: {지문: info}} — 읽기 전용.
@@ -926,6 +958,8 @@ def check_site(sitecode: str, page_key: str, rules, capture: bool, run_date: str
 
         # ── 요소별 디자인 지문 → 이미 캡처한 요소인지 판정 ──
         descs = page.evaluate(_JS_DESCRIBE, [it["idx"] for it in hit_items])
+        if RESCROLL_HIDDEN:
+            descs = _rescroll_hidden(page, hit_items, descs, tag)
         for n, (it, desc) in enumerate(zip(hit_items, descs), start=1):
             it["n"] = n                                              # 캡처 배지·범례 번호
             it["hidden"] = not (desc or {}).get("visible", True)     # 접힌 메뉴 안 등 화면에 안 보임
@@ -994,6 +1028,12 @@ def check_site(sitecode: str, page_key: str, rules, capture: bool, run_date: str
                             "lines": _legend_lines(hit_items, revealed), "boxStyle": LEGEND_BOX_STYLE})
                     page.evaluate(_JS_MARK, {"marks": _marks([it for it in hit_items if not it["hidden"]]),
                                              "badge": CAPTURE_BADGE, "badgeStyle": BADGE_STYLE, "temp": False})
+                    if CAPTURE_SETTLE_MS and CAPTURE_FULL_PAGE:
+                        # 전체 캡처는 순간적으로 화면 높이를 페이지 전체로 늘려 찍는데, 그때 KV 가 이미지를 다시 골라
+                        # 저화질 미리보기가 찍힌다 → 미리 늘려 두고 기다린 뒤 찍는다. (이 page 는 캡처 후 닫으므로 되돌리지 않는다)
+                        full_h = page.evaluate("() => document.documentElement.scrollHeight")
+                        page.set_viewport_size({"width": BROWSER_VIEWPORT["width"], "height": int(full_h)})
+                        page.wait_for_timeout(CAPTURE_SETTLE_MS)
                     page.screenshot(path=str(out), full_page=CAPTURE_FULL_PAGE)
                     main_rel = _capture_ref(out)
                 shots = list(dict.fromkeys(([main_rel] if main_rel else []) + list(revealed.values())))
