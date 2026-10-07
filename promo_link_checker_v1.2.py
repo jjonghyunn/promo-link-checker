@@ -3,7 +3,8 @@
 # updated: 2026-10-07 — 숨김 판정된 본문 hit 요소를 하나씩 화면 가운데로 스크롤해 1.2초 기다린 뒤 다시 판정 (RESCROLL_HIDDEN) —
 #                       KV 텍스트·CTA 가 화면에 머물러야 페이드인되는데 빠른 스크롤이 건너뛰어 [숨김] 처리되고
 #                       테두리가 빠지던 문제. 전체 캡처 직전 화면 높이를 늘려 두고 1.5초 대기(CAPTURE_SETTLE_MS) —
-#                       KV 고화질 이미지가 그려지기 전에 찍혀 흐릿하던 문제
+#                       KV 고화질 이미지가 그려지기 전에 찍혀 흐릿하던 문제.
+#                       EXCLUDE_HIT_SELECTOR 로 채팅봇 위젯 프로모 배너를 hit 에서 제외 (닫힌 위젯이라 안 보이는데 재캡처되던 문제)
 # updated: 2026-10-06 — 링크 URL 경로가 .pdf 로 끝나면 hit 에서 제외 (EXCLUDE_LINK_EXTENSIONS) —
 #                       경로에 캠페인명이 들어간 약관·고지 PDF 가 hit 로 잡히던 오탐
 # (이전 버전 이력은 git history / GitHub Releases 참조 — 헤더에는 최근 2개 항목만 남긴다)
@@ -209,6 +210,10 @@ CLICKABLE_SELECTOR: str = "a[href], area[href]"
 # True 면 GNB/Footer 안 링크는 hit 에서 뺀다 (False = 페이지 전체. 리포트엔 영역 태그가 붙는다)
 EXCLUDE_GLOBAL_UI: bool = False
 GLOBAL_UI_SELECTOR: str = "header, nav, footer, [class*='gnb'], [id*='gnb'], [an-ac='gnb']"
+# 이 선택자 안(또는 자신)에 있는 링크는 키워드가 맞아도 hit 에서 뺀다. 빈 문자열이면 제외 안 함.
+# 채팅봇 위젯 프로모 배너 — 위젯이 닫혀 있어 화면에 안 보이는데(0×0), 배너 이미지만 바뀌어도 디자인변경으로
+# 재캡처돼 테두리 없는 캡처만 쌓였다.
+EXCLUDE_HIT_SELECTOR: str = "[class*='rcw-promo']"
 
 # ─── 출력 ──────────────────────────────────────────────────────────
 OUTPUT_DIR: Path = SCRIPT_DIR / "output"
@@ -347,7 +352,7 @@ _RE_NON_WORD = re.compile(r"[\W_]+", re.UNICODE)
 _thread_local = threading.local()
 
 # 페이지 안에서 링크를 모으는 JS. 각 요소에 data-plc-idx 를 달아 캡처 때 다시 찾는다.
-_JS_COLLECT = r"""({selector, textAttrs, uiSelector}) => {
+_JS_COLLECT = r"""({selector, textAttrs, uiSelector, excludeSelector}) => {
     const out = [];
     document.querySelectorAll(selector).forEach((el, i) => {
         el.setAttribute("data-plc-idx", String(i));
@@ -362,6 +367,7 @@ _JS_COLLECT = r"""({selector, textAttrs, uiSelector}) => {
             text: text.slice(0, 300),
             extra: extra.slice(0, 300),
             global_ui: Boolean(uiSelector && el.closest(uiSelector)),
+            excluded: Boolean(excludeSelector && el.closest(excludeSelector)),
         });
     });
     return out;
@@ -932,6 +938,7 @@ def check_site(sitecode: str, page_key: str, rules, capture: bool, run_date: str
             "selector": CLICKABLE_SELECTOR,
             "textAttrs": TEXT_ATTRIBUTES,
             "uiSelector": GLOBAL_UI_SELECTOR,
+            "excludeSelector": EXCLUDE_HIT_SELECTOR,
         })
         logger.debug("[%s] clickable elements: %d", tag, len(items))
 
@@ -939,6 +946,8 @@ def check_site(sitecode: str, page_key: str, rules, capture: bool, run_date: str
         hit_items: list[dict] = []
         for item in items:
             if EXCLUDE_GLOBAL_UI and item["global_ui"]:
+                continue
+            if item.get("excluded"):
                 continue
             # 상대경로도 브라우저가 해석한 절대 URL(abs)로 본다
             link = item["abs"] or item["href"]

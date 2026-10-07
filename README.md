@@ -77,6 +77,9 @@ offer
 ### 그 외
 - `EXCLUDE_GLOBAL_UI` — `True` 면 GNB/Footer 안 링크는 hit 에서 뺀다. 기본 `False`(페이지 전체)이고,
   리포트에는 `[GNB/Footer]` 태그가 붙어 구분된다.
+- `EXCLUDE_HIT_SELECTOR` — 이 선택자 안(또는 자신)의 링크는 키워드가 맞아도 hit 에서 뺀다. 기본값은 채팅봇 위젯
+  프로모 배너(`[class*='rcw-promo']`) — 닫힌 위젯 안이라 화면에 안 보이는데, 배너 이미지만 바뀌어도 디자인변경으로
+  재캡처돼 테두리 없는 캡처만 쌓였다. 빈 문자열이면 제외 안 함.
 - `CAPTURE_ON_HIT` / `CAPTURE_FULL_PAGE` — 캡처 on/off, 전체 페이지 여부.
 - 캡처 중복 방지 — 아래 "5. 캡처 규칙" 참고 (`CAPTURE_STATE_NAME`, `FINGERPRINT_*`, `HIGHLIGHT_*`).
 - 캡처 표시 — `CAPTURE_LEGEND`(맨 위 범례 박스) / `CAPTURE_BADGE`(번호 배지) / `CAPTURE_REVEAL_HIDDEN`(접힌 메뉴 펼쳐 캡처)
