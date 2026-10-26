@@ -1,4 +1,4 @@
-# promo_link_checker_v1.2.py
+# promo_link_checker_v1.3.py
 # 2026-10-26  Jonghyun Park w/ Claude
 # updated: 2026-10-26 — 화면에서 안 바뀐 요소가 "디자인변경"으로 재캡처되던 문제 2건 수정 —
 #                       (1) 크기만 반올림 경계(예: 90px)에서 흔들려 지문이 달라지던 것: class·이미지·텍스트가 같고
@@ -33,10 +33,10 @@ promo_link_checker — 국가별 홈 · 프로모션(offer) 페이지의 클릭 
   경로가 EXCLUDE_LINK_EXTENSIONS(기본 .pdf)로 끝나는 링크는 키워드가 맞아도 제외한다 (약관·고지 PDF).
 
 사용 예:
-  python promo_link_checker_v1.2.py
-  python promo_link_checker_v1.2.py --sitecodes ae,hq
-  python promo_link_checker_v1.2.py --pages home
-  python promo_link_checker_v1.2.py --sitecodes uk --debug --no-capture
+  python promo_link_checker_v1.3.py
+  python promo_link_checker_v1.3.py --sitecodes ae,hq
+  python promo_link_checker_v1.3.py --pages home
+  python promo_link_checker_v1.3.py --sitecodes uk --debug --no-capture
 
 출력 (스크립트 폴더 기준):
   output/_daily_report.xlsx                      일일 누적 리포트 (유일한 상시 산출물)

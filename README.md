@@ -4,7 +4,7 @@
 결과를 `_daily_report.xlsx` 에 하루 1블록씩 누적하는 도구. 캡처는 **처음 보는 hit 요소, 또는 디자인이
 바뀐 요소가 있을 때만 1회** 찍는다(매일 누적 캡처하지 않음).
 
-- 단일 파일 `promo_link_checker_v1.2.py` — 설정은 전부 상단 `사용자가 바꿔야 하는 부분` 블록.
+- 단일 파일 `promo_link_checker_v1.3.py` — 설정은 전부 상단 `사용자가 바꿔야 하는 부분` 블록.
 
 ---
 
@@ -99,18 +99,18 @@ offer
 ## 3. 실행
 
 ```bash
-python promo_link_checker_v1.2.py                    # SITECODES 전체
-python promo_link_checker_v1.2.py --sitecodes ae,hq # 일부 국가만
-python promo_link_checker_v1.2.py --pages home       # 일부 페이지만
-python promo_link_checker_v1.2.py --no-capture       # hit 여도 캡처 안 함
-python promo_link_checker_v1.2.py --debug            # 사이트별 클릭 요소 수 등 진단 로그
+python promo_link_checker_v1.3.py                    # SITECODES 전체
+python promo_link_checker_v1.3.py --sitecodes ae,hq # 일부 국가만
+python promo_link_checker_v1.3.py --pages home       # 일부 페이지만
+python promo_link_checker_v1.3.py --no-capture       # hit 여도 캡처 안 함
+python promo_link_checker_v1.3.py --debug            # 사이트별 클릭 요소 수 등 진단 로그
 ```
 
 ## 4. 출력
 
 ```
 promo_link_checker/
-├── promo_link_checker_v1.2.py
+├── promo_link_checker_v1.3.py
 ├── README.md
 └── output/
     ├── _daily_report.xlsx            ← 일일 누적 리포트
@@ -213,7 +213,7 @@ promo_link_checker/
 작업명 `promo_link_checker_<캠페인>`, 매일 **09:31 · 12:01**, `pythonw.exe` 직접 실행(콘솔 창 없음):
 
 ```powershell
-$script   = "<운영 폴더>\promo_link_checker_v1.2.py"
+$script   = "<운영 폴더>\promo_link_checker_v1.3.py"
 $action   = New-ScheduledTaskAction -Execute "C:\Python314\pythonw.exe" -Argument "`"$script`"" -WorkingDirectory (Split-Path $script)
 $trigger  = @("09:31", "12:01") | ForEach-Object { $t = New-ScheduledTaskTrigger -Daily -At $_; $t.EndBoundary = "2026-12-10T23:59:59"; $t }
 $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Hours 2) -MultipleInstances IgnoreNew
