@@ -1,12 +1,15 @@
 # promo_link_checker_v1.2.py
-# 2026-10-07  Jonghyun Park w/ Claude
-# updated: 2026-10-07 — 숨김 판정된 본문 hit 요소를 하나씩 화면 가운데로 스크롤해 1.2초 기다린 뒤 다시 판정 (RESCROLL_HIDDEN) —
-#                       KV 텍스트·CTA 가 화면에 머물러야 페이드인되는데 빠른 스크롤이 건너뛰어 [숨김] 처리되고
-#                       테두리가 빠지던 문제. 전체 캡처 직전 화면 높이를 늘려 두고 1.5초 대기(CAPTURE_SETTLE_MS) —
-#                       KV 고화질 이미지가 그려지기 전에 찍혀 흐릿하던 문제.
-#                       EXCLUDE_HIT_SELECTOR 로 채팅봇 위젯 프로모 배너를 hit 에서 제외 (닫힌 위젯이라 안 보이는데 재캡처되던 문제)
-# updated: 2026-10-06 — 링크 URL 경로가 .pdf 로 끝나면 hit 에서 제외 (EXCLUDE_LINK_EXTENSIONS) —
-#                       경로에 캠페인명이 들어간 약관·고지 PDF 가 hit 로 잡히던 오탐
+# 2026-10-26  Jonghyun Park w/ Claude
+# updated: 2026-10-26 — 화면에서 안 바뀐 요소가 "디자인변경"으로 재캡처되던 문제 2건 수정 —
+#                       (1) 크기만 반올림 경계(예: 90px)에서 흔들려 지문이 달라지던 것: class·이미지·텍스트가 같고
+#                           크기 차이가 FINGERPRINT_SIZE_TOLERANCE(20px) 이하이거나 한쪽이 0×0(숨김 상태)이면 같은 디자인으로 본다
+#                       (2) Insider 개인화 팝업 링크(0×0, 화면에 안 보임)를 EXCLUDE_HIT_SELECTOR 로 hit 에서 제외
+#                       캡처를 JPG(품질 82)로 저장 (CAPTURE_IMAGE_EXT · CAPTURE_JPEG_QUALITY) — 다른 캡처 도구와 형식 통일, 용량 절감
+# updated: 2026-10-14 — 숨은 본문 hit 요소가 **안 열린 탭 패널** 안에 있으면 그 탭을 눌러 보이게 한 뒤 테두리·배지를 그려
+#                       <캡처명>_tab.png 를 남긴다 (CAPTURE_REVEAL_TABS) — 요소 위아래 REVEAL_TAB_CONTEXT_PX(700px) 범위 + 맨 위 범례. 탭은 aria-controls / href="#패널id" /
+#                       aria-labelledby 로 찾고, 없으면 같은 개수의 탭 버튼 목록에서 패널 순번으로 고른다.
+#                       전체 캡처의 테두리도 "그 시점에 실제로 보이는 요소" 기준으로 그린다 (탭이 열린 채면 같이 표시).
+#                       (안 열린 탭 안 링크가 [숨김] 으로만 남던 문제)
 # (이전 버전 이력은 git history / GitHub Releases 참조 — 헤더에는 최근 2개 항목만 남긴다)
 r"""
 promo_link_checker — 국가별 홈 · 프로모션(offer) 페이지의 클릭 가능한 요소 중에
@@ -37,8 +40,8 @@ promo_link_checker — 국가별 홈 · 프로모션(offer) 페이지의 클릭 
 
 출력 (스크립트 폴더 기준):
   output/_daily_report.xlsx                      일일 누적 리포트 (유일한 상시 산출물)
-  <CAPTURE_DIR>/<sitecode>/<sitecode>_<page>_<YYMMDD>_<HHMM>.png  화면에 보이는 새 요소·디자인 변경이 있을 때만
-  <CAPTURE_DIR>/<sitecode>/<sitecode>_<page>_menu_<YYMMDD>_<HHMM>.png  hit 요소가 접힌 메뉴 안에 있을 때, 메뉴를 펼친 화면
+  <CAPTURE_DIR>/<sitecode>/<sitecode>_<page>_<YYMMDD>_<HHMM>.jpg  화면에 보이는 새 요소·디자인 변경이 있을 때만
+  <CAPTURE_DIR>/<sitecode>/<sitecode>_<page>_menu_<YYMMDD>_<HHMM>.jpg  hit 요소가 접힌 메뉴 안에 있을 때, 메뉴를 펼친 화면
   output/_capture_state.json                     이미 캡처한 요소 기록 (지우면 처음부터 다시 캡처)
   output/_run_latest.log                         매 실행 덮어씀 (pythonw 스케줄 실행 추적용)
 
@@ -213,7 +216,8 @@ GLOBAL_UI_SELECTOR: str = "header, nav, footer, [class*='gnb'], [id*='gnb'], [an
 # 이 선택자 안(또는 자신)에 있는 링크는 키워드가 맞아도 hit 에서 뺀다. 빈 문자열이면 제외 안 함.
 # 채팅봇 위젯 프로모 배너 — 위젯이 닫혀 있어 화면에 안 보이는데(0×0), 배너 이미지만 바뀌어도 디자인변경으로
 # 재캡처돼 테두리 없는 캡처만 쌓였다.
-EXCLUDE_HIT_SELECTOR: str = "[class*='rcw-promo']"
+# Insider 개인화 팝업 링크 — 화면에 안 보이는(0×0) 레이어인데 디자인변경으로 재캡처됐다.
+EXCLUDE_HIT_SELECTOR: str = "[class*='rcw-promo'], .ins-element-link, .ins-content-link"
 
 # ─── 출력 ──────────────────────────────────────────────────────────
 OUTPUT_DIR: Path = SCRIPT_DIR / "output"
@@ -221,8 +225,12 @@ DAILY_REPORT_NAME: str = "_daily_report.xlsx"
 # 캡처 저장 폴더 (절대경로) — 이 아래에 sitecode 폴더가 생긴다. 리포트·기록·로그는 OUTPUT_DIR 에 그대로 남는다.
 # OUTPUT_DIR 밖이면 리포트·기록에는 절대경로로 적힌다.
 CAPTURE_DIR: Path = Path(r"C:\path\to\your\capture_archive")
-# 캡처 파일명 맨 뒤에 붙는 찍은 날짜·시각 (strftime 형식) → <sitecode>_<page>[_menu]_261001_1133.png
+# 캡처 파일명 맨 뒤에 붙는 찍은 날짜·시각 (strftime 형식) → <sitecode>_<page>[_menu]_261001_1133.jpg
 CAPTURE_TIME_FORMAT: str = "%y%m%d_%H%M"
+# 캡처 이미지 형식 — ".jpg"(용량 작음, 다른 캡처 도구와 같은 방식) 또는 ".png"(무손실)
+CAPTURE_IMAGE_EXT: str = ".jpg"
+# JPG 품질 (1~100). ".png" 면 쓰지 않는다
+CAPTURE_JPEG_QUALITY: int = 82
 # hit 요소를 캡처한다. False 면 캡처를 아예 안 한다 (--no-capture 와 같음)
 CAPTURE_ON_HIT: bool = True
 CAPTURE_FULL_PAGE: bool = True
@@ -241,6 +249,10 @@ VERIFY_CAPTURE_EXISTS: bool = True
 #   text    = 요소 텍스트 (숫자는 지운다 — 가격·날짜만 바뀐 건 디자인 변경으로 안 본다)
 FINGERPRINT_FIELDS: list[str] = ["size", "classes", "images", "text"]
 FINGERPRINT_SIZE_STEP: int = 20
+# 지문이 달라도 class·이미지·텍스트가 같고 크기 차이가 가로·세로 각각 이 값(px) 이하면 같은 디자인으로 본다.
+# 반올림 경계(예: 90px)에서 1~2px 흔들려 80 ↔ 100 으로 갈리는 것 방지. 한쪽이 0×0(탭·캐러셀 안 숨김 상태)이면 크기는 안 본다.
+# 0 이면 지문이 정확히 같을 때만 같은 디자인.
+FINGERPRINT_SIZE_TOLERANCE: int = 20
 # 캐러셀·레이지 로딩이 로드할 때마다 바꾸는 상태 class — 지문에서 뺀다 (정규식, 대소문자 무시)
 FINGERPRINT_CLASS_IGNORE: str = r"active|current|visible|hidden|loaded|loading|lazy|hover|focus|prev|next|duplicate|selected|animat|is-|swiper-slide-"
 # 캡처 시 테두리: 새로 찍는 이유가 된 요소(신규·디자인 변경) / 이미 찍은 적 있는 요소
@@ -257,22 +269,35 @@ BADGE_STYLE: str = ("min-width:24px;height:24px;padding:0 7px;border-radius:12px
 # 범례 박스: 캡처 맨 위에 "번호 [영역] 링크 텍스트 → URL (신규/디자인변경/기존)" 을 한 줄씩 적는다
 CAPTURE_LEGEND: bool = True
 LEGEND_TITLE: str = "promo_link_checker — 타겟 링크가 걸린 요소"
-LEGEND_HIDDEN_NOTE: str = "  ⚠ 화면에 안 보임 (접힌 메뉴·안 보이는 슬라이드 안) — 전체 캡처에는 테두리가 없다"
+LEGEND_HIDDEN_NOTE: str = "  ⚠ 화면에 안 보임 (접힌 메뉴·안 열린 탭·안 보이는 슬라이드 안) — 전체 캡처에는 테두리가 없을 수 있다"
 LEGEND_BOX_STYLE: str = ("position:relative;z-index:2147483647;box-sizing:border-box;width:100%;padding:12px 16px;"
                          "background:#fffbe6;border-bottom:3px solid red;color:#111;text-align:left;"
                          "font:14px/1.5 Arial,'Malgun Gothic',sans-serif")
 # 리포트 매칭링크에 붙는 태그 (화면에 안 보이는 요소)
 HIDDEN_TAG: str = "[숨김]"
 # 숨은 hit 요소 펼쳐 찍기: 그 요소의 가장 가까운 "보이는 조상"(GNB 1단계 메뉴 등)에 마우스를 올려
-# 요소가 나타나면 현재 화면(뷰포트)을 <캡처명>_menu.png 로 찍는다. 안 나타나면 건너뛴다.
+# 요소가 나타나면 현재 화면(뷰포트)을 <캡처명>_menu.jpg 로 찍는다. 안 나타나면 건너뛴다.
 # 새 요소가 전부 숨은 요소이고 펼친 캡처가 찍혔으면 전체 페이지 캡처는 생략한다 (테두리 없는 전체 캡처는 볼 게 없다).
 CAPTURE_REVEAL_HIDDEN: bool = True
 REVEAL_CAPTURE_SUFFIX: str = "_menu"
 REVEAL_HOVER_WAIT_MS: int = 800
 # 마우스를 메뉴 위로 옮길 때 거치는 중간 단계 수 (한 번에 점프하면 hover 이벤트가 안 걸리는 메뉴가 있다)
 REVEAL_MOUSE_STEPS: int = 5
-# 한 페이지에서 펼쳐 찍는 추가 캡처 상한 (서로 다른 메뉴에 흩어져 있을 때)
+# 한 페이지에서 펼쳐 찍는 추가 캡처 상한 (서로 다른 메뉴·탭에 흩어져 있을 때 — 메뉴·탭 합산)
 REVEAL_MAX_CAPTURES: int = 3
+# 숨은 본문 hit 요소가 안 열린 탭 패널 안에 있으면 그 탭을 눌러 펼친 뒤 테두리를 그려 뷰포트를 <캡처명>_tab.jpg 로 찍는다.
+# 탭 찾는 순서: aria-controls / href="#id" / data-target="#id" (패널·조상 id) → aria-labelledby → 같은 개수 탭 목록의 같은 순번.
+# 페이지 이동이 일어나지 않게 button · [role=tab] · href 가 '#'/'javascript:'/없음 인 <a> 만 누른다.
+CAPTURE_REVEAL_TABS: bool = True
+REVEAL_TAB_SUFFIX: str = "_tab"
+REVEAL_TAB_WAIT_MS: int = 1_200
+# 탭 목록 후보를 찾을 때 패널에서 위로 올라가 볼 조상 단계 수
+REVEAL_TAB_SEARCH_DEPTH: int = 5
+# 탭 캡처 순간에만 화면에 떠 있는(position: fixed) 팝업·채팅 위젯·고정 GNB 를 숨긴다 — 테두리 친 요소를 가리지 않게
+REVEAL_TAB_HIDE_FLOATING: bool = True
+# 탭 캡처 범위 — 테두리 친 요소들을 감싼 영역에서 위아래로 이만큼(px) 더 찍는다 (앞뒤 콘텐츠가 뭔지 알아볼 수 있게).
+# 범위 바로 위에 전체 캡처와 같은 범례 박스를 붙인다 (CAPTURE_LEGEND 가 켜져 있을 때).
+REVEAL_TAB_CONTEXT_PX: int = 700
 # 리포트 셀에 적을 매칭 링크 최대 개수 (넘으면 "… 외 N건")
 MAX_LINKS_IN_REPORT: int = 20
 # 리포트 저장 전 최소 여유공간(MB). 0 이면 검사 안 함.
@@ -311,7 +336,7 @@ SCROLL_MAX_STEPS: int = 60
 # 스크롤 후 추가 요청이 잦아들기를 기다리는 상한
 SETTLE_NETWORKIDLE_MS: int = 8_000
 # 숨김으로 판정된 본문 hit 요소를 하나씩 화면 가운데로 스크롤해 기다린 뒤 다시 판정한다.
-# KV 텍스트·CTA 는 화면 안에 잠깐 머물러야 페이드인되는데, 위 스크롤은 빨라서 건너뛸 때가 있다
+# KV 텍스트·CTA 는 화면 안에 잠깐 머물러야 페이드인되는데(co76-feature-kv--animate), 위 스크롤은 빨라서 건너뛸 때가 있다
 # (그러면 [숨김] 처리돼 테두리가 빠진다. 페이지 전체를 더 기다려도 안 나타난다).
 # 크기 0 인 요소(display:none 복제본 등)와 GNB/Footer 요소(메뉴 펼침 캡처로 처리)는 건너뛴다.
 RESCROLL_HIDDEN: bool = True
@@ -431,10 +456,21 @@ _JS_MARK = "({marks, badge, badgeStyle, temp}) => {" + _JS_VISIBLE_FN + r"""
     for (const m of marks) {
         const el = document.querySelector(`[data-plc-idx="${m.idx}"]`);
         if (!el) continue;
-        el.style.outline = m.outline;
-        el.style.outlineOffset = "2px";
-        if (!badge) continue;
+        // 크기 0 인 inline <a> 는 테두리가 안 보인다 → 크기 있는 첫 자식에 그린다 (plcRect 와 같은 기준)
+        const own = el.getBoundingClientRect();
+        const box = (own.width >= 1 && own.height >= 1) ? el
+            : (Array.from(el.children).find(c => { const cr = c.getBoundingClientRect(); return cr.width >= 1 && cr.height >= 1; }) || el);
+        box.style.outline = m.outline;
+        box.style.outlineOffset = "2px";
         const r = plcRect(el);
+        // 부모가 overflow 로 테두리를 잘라내는 카드형 링크 대비 — 같은 테두리 사각형을 맨 위 레이어에 한 겹 더 그린다
+        const f = document.createElement("div");
+        f.setAttribute("data-plc-badge", temp ? "temp" : "1");
+        f.style.cssText = `position:absolute;z-index:2147483646;pointer-events:none;box-sizing:border-box;border:${m.outline}`
+            + `;left:${r.left + window.scrollX - 2}px;top:${r.top + window.scrollY - 2}px`
+            + `;width:${r.width + 4}px;height:${r.height + 4}px`;
+        document.body.appendChild(f);
+        if (!badge) continue;
         const b = document.createElement("div");
         b.setAttribute("data-plc-badge", temp ? "temp" : "1");
         b.textContent = String(m.n);
@@ -488,6 +524,128 @@ _JS_REVEAL_TARGET = "(idx) => {" + _JS_VISIBLE_FN + r"""
                 over: top ? top.tagName + "." + (top.getAttribute("class") || "") : ""};
     }
     return null;
+}"""
+
+# 숨은 요소를 품은 "안 열린 탭 패널" 의 탭 버튼을 찾아 data-plc-tab="1" 로 표시한다. 못 찾으면 null.
+#   panel = 요소에서 위로 올라가며 "부모가 보이는" 첫 숨은 조상 (= 접힌 탭 패널)
+_JS_TAB_TARGET = "({idx, depth}) => {" + _JS_VISIBLE_FN + r"""
+    document.querySelectorAll('[data-plc-tab]').forEach(n => n.removeAttribute('data-plc-tab'));
+    const el = document.querySelector(`[data-plc-idx="${idx}"]`);
+    if (!el) return null;
+    let panel = el;
+    while (panel.parentElement && panel.parentElement !== document.body && !plcVisible(panel.parentElement))
+        panel = panel.parentElement;
+    if (panel === el || !panel.parentElement) return null;
+    const clickable = (t) => {
+        if (!t || !plcVisible(t)) return false;
+        if (t.tagName === "A") return /^(#|javascript:|$)/i.test((t.getAttribute("href") || "").trim());
+        return true;
+    };
+    const pick = (t, how) => {
+        if (!clickable(t)) return null;
+        t.setAttribute("data-plc-tab", "1");
+        return {how: how, text: (t.innerText || t.getAttribute("aria-label") || "").replace(/\s+/g, " ").trim().slice(0, 40)};
+    };
+    // 1) id 로 연결된 탭 (패널 ~ 요소 사이 숨은 조상 전부)
+    for (let p = el; p && p !== panel.parentElement; p = p.parentElement) {
+        const id = p.id;
+        if (id) {
+            const q = CSS.escape(id);
+            for (const t of document.querySelectorAll(`[aria-controls="${q}"], a[href="#${q}"], [data-target="#${q}"], [data-bs-target="#${q}"], [data-tab="${q}"]`)) {
+                const r = pick(t, "id:" + id); if (r) return r;
+            }
+        }
+        const lb = p.getAttribute && p.getAttribute("aria-labelledby");
+        if (lb) {
+            const r = pick(document.getElementById(lb.split(/\s+/)[0]), "labelledby"); if (r) return r;
+        }
+    }
+    // 2) 순번: 패널 형제(같은 태그) 중 몇 번째인지 → 같은 개수의 탭 버튼 목록에서 같은 순번
+    const sibs = Array.from(panel.parentElement.children).filter(s => s.tagName === panel.tagName);
+    const i = sibs.indexOf(panel);
+    if (sibs.length < 2 || i < 0) return null;
+    let anc = panel.parentElement;
+    for (let d = 0; anc && anc !== document.body && d < depth; d++, anc = anc.parentElement) {
+        const lists = anc.querySelectorAll('[role="tablist"], [class*="tab"]');
+        for (const L of lists) {
+            if (L.contains(panel) || panel.contains(L) || !plcVisible(L)) continue;
+            for (const sel of ['[role="tab"]', 'button', 'a', 'li']) {
+                const items = Array.from(L.querySelectorAll(sel)).filter(t => plcVisible(t));
+                if (items.length === sibs.length) {
+                    const t = sel === 'li' ? (items[i].querySelector('button, a, [role="tab"]') || items[i]) : items[i];
+                    const r = pick(t, `index ${i + 1}/${sibs.length}`); if (r) return r;
+                }
+            }
+        }
+    }
+    return null;
+}"""
+
+# 화면에 떠 있는 요소(position: fixed) 숨기기 / 되돌리기 — 배지(data-plc-badge)·범례는 건드리지 않는다
+#   opacity 로 숨긴다 (visibility 는 자식이 visible 로 되살릴 수 있다). shadow DOM 안쪽까지 본다.
+_JS_HIDE_FLOATING = r"""() => {
+    window.__plcHidden = [];
+    const walk = (root) => {
+        for (const e of root.querySelectorAll("*")) {
+            if (e.shadowRoot) walk(e.shadowRoot);
+            if (e.hasAttribute("data-plc-badge") || e.hasAttribute("data-plc-legend")) continue;
+            if (getComputedStyle(e).position !== "fixed") continue;   // sticky(탭 바 등 본문 흐름 안)는 그대로 둔다
+            window.__plcHidden.push([e, e.style.getPropertyValue("opacity"), e.style.getPropertyPriority("opacity")]);
+            e.style.setProperty("opacity", "0", "important");
+        }
+    };
+    walk(document);
+    return window.__plcHidden.length;
+}"""
+_JS_SHOW_FLOATING = r"""() => {
+    for (const [e, v, pr] of (window.__plcHidden || [])) {
+        if (v) e.style.setProperty("opacity", v, pr); else e.style.removeProperty("opacity");
+    }
+    window.__plcHidden = [];
+}"""
+
+# 탭 캡처 범위 계산 + 범위 바로 위에 범례 박스(absolute) 배치 → 잘라 찍을 영역(page 좌표) 반환.
+#   idxs = 테두리 친 요소, ctx = 위아래 여백(px). lines/title 이 없으면 범례 없이 범위만.
+_JS_TAB_CLIP = "({idxs, ctx, title, lines, boxStyle}) => {" + _JS_VISIBLE_FN + r"""
+    let top = Infinity, bottom = -Infinity;
+    for (const i of idxs) {
+        const el = document.querySelector(`[data-plc-idx="${i}"]`);
+        if (!el) continue;
+        const r = plcRect(el);
+        top = Math.min(top, r.top + window.scrollY);
+        bottom = Math.max(bottom, r.bottom + window.scrollY);
+    }
+    if (!isFinite(top)) return null;
+    const docH = document.documentElement.scrollHeight;
+    const width = document.documentElement.clientWidth;
+    let y0 = Math.max(0, top - ctx);
+    const y1 = Math.min(docH, bottom + ctx);
+    if (lines && lines.length) {
+        const box = document.createElement("div");
+        box.setAttribute("data-plc-badge", "temp");          // _JS_CLEAR_TEMP 로 같이 지운다
+        box.setAttribute("data-plc-legend", "1");
+        box.style.cssText = boxStyle + ";position:absolute;left:0;width:" + width + "px;z-index:2147483647";
+        const head = document.createElement("div");
+        head.textContent = title;
+        head.style.cssText = "font-weight:700;margin-bottom:6px";
+        box.appendChild(head);
+        for (const l of lines) {
+            const row = document.createElement("div");
+            row.style.cssText = "margin:3px 0;word-break:break-all";
+            const num = document.createElement("span");
+            num.textContent = String(l.n);
+            num.style.cssText = "display:inline-block;min-width:22px;padding:0 6px;margin-right:8px;border-radius:11px;"
+                + `color:#fff;font-weight:700;text-align:center;background:${l.color}`;
+            row.appendChild(num);
+            row.appendChild(document.createTextNode(l.text));
+            box.appendChild(row);
+        }
+        document.body.appendChild(box);
+        const h = box.offsetHeight;
+        y0 = Math.max(0, y0 - h);              // 범례 높이만큼 위로 넓혀 범례 아래에 원래 범위가 온다
+        box.style.top = y0 + "px";
+    }
+    return {x: 0, y: y0, width: width, height: Math.max(1, y1 - y0)};
 }"""
 
 KIND_LABELS = {"new": "신규", "changed": "디자인변경", "recapture": "재캡처 — 기존 캡처 파일 없음", "known": "기존"}
@@ -713,6 +871,18 @@ def design_fingerprint(desc: dict) -> tuple[str, dict]:
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12], parts
 
 
+def _same_design(a: dict, b: dict) -> bool:
+    """크기 외 항목이 같고, 크기는 허용오차 안이거나 한쪽이 0×0(숨김 상태)이면 같은 디자인."""
+    if FINGERPRINT_SIZE_TOLERANCE <= 0 or not a or not b:
+        return False
+    if any(a.get(k) != b.get(k) for k in FINGERPRINT_FIELDS if k != "size"):
+        return False
+    sa, sb = a.get("size") or [0, 0], b.get("size") or [0, 0]
+    if sa == [0, 0] or sb == [0, 0]:
+        return True
+    return all(abs(x - y) <= FINGERPRINT_SIZE_TOLERANCE for x, y in zip(sa, sb))
+
+
 def load_capture_state() -> dict:
     """{"sitecode|page": {링크키: {지문: {"first_seen", "capture", "design"}}}}"""
     path = OUTPUT_DIR / CAPTURE_STATE_NAME
@@ -819,6 +989,13 @@ def _capture_ref(path: Path) -> str:
         return str(path)
 
 
+def _screenshot(page: Page, out: Path, **kw) -> None:
+    """캡처 저장 — 확장자가 .jpg/.jpeg 면 CAPTURE_JPEG_QUALITY 로 JPEG 저장 (Playwright 가 확장자로 형식을 고른다)."""
+    if out.suffix.lower() in (".jpg", ".jpeg"):
+        kw["quality"] = CAPTURE_JPEG_QUALITY
+    page.screenshot(path=str(out), **kw)
+
+
 def _capture_exists(ref: str) -> bool:
     """기록에 적힌 캡처(_capture_ref 형식 — OUTPUT_DIR 기준 상대경로 또는 절대경로)가 실제로 있는지."""
     if not ref:
@@ -840,9 +1017,63 @@ def _capture_link(ref: str) -> str:
     return "file:///" + _RE_URI_ESCAPE.sub(lambda m: f"%{ord(m.group()):02X}", path.as_posix())
 
 
+def _reveal_by_tab(page: Page, it: dict, hidden: list[dict], done: dict[int, str], tag: str) -> tuple[set[int], str]:
+    """it 를 품은 안 열린 탭을 눌러 펼친다 → (펼친 뒤 보이는 숨은 요소 idx 집합, 누른 탭 텍스트).
+    it 이 안 보이면 빈 집합."""
+    target = page.evaluate(_JS_TAB_TARGET, {"idx": it["idx"], "depth": REVEAL_TAB_SEARCH_DEPTH})
+    if not target:
+        logger.debug("[%s] 탭 못 찾음: %s", tag, it["abs"] or it["href"])
+        return set(), ""
+    logger.debug("[%s] 탭 클릭 (%s) '%s'", tag, target["how"], target["text"])
+    page.locator('[data-plc-tab="1"]').first.click(timeout=5_000)
+    page.wait_for_timeout(REVEAL_TAB_WAIT_MS)
+    pending = [h["idx"] for h in hidden if h["idx"] not in done]
+    shown = set(page.evaluate(_JS_VISIBLE_IDXS, pending))
+    if it["idx"] not in shown:
+        logger.debug("[%s] 탭을 눌러도 안 보임: %s", tag, it["abs"] or it["href"])
+        return set(), ""
+    page.evaluate("i => document.querySelector(`[data-plc-idx=\"${i}\"]`).scrollIntoView({block: 'center'})", it["idx"])
+    page.wait_for_timeout(REVEAL_TAB_WAIT_MS)
+    return set(page.evaluate(_JS_VISIBLE_IDXS, pending)), target["text"]
+
+
+def _tab_legend_lines(items: list[dict]) -> list[dict]:
+    """탭 캡처 범례 — 전체 캡처 범례와 같은 형식, 숨김 경고 문구는 빼고 (이 캡처에서는 보이므로)."""
+    lines = []
+    for it in items[:MAX_LINKS_IN_REPORT]:
+        area = "GNB/Footer" if it["global_ui"] else "본문"
+        label = (it["text"] or it["extra"])[:60]
+        lines.append({"n": it["n"],
+                      "text": f"[{area}] {label + ' → ' if label else ''}{it['abs'] or it['href']}  ({KIND_LABELS.get(it.get('kind'), '')})",
+                      "color": BADGE_COLOR_KNOWN if it.get("kind") == "known" else BADGE_COLOR_NEW})
+    return lines
+
+
+def _shoot_tab(page: Page, items: list[dict], out: Path, tag: str, tab_text: str) -> None:
+    """탭을 연 상태에서: 테두리·배지 → 범례 → 위아래 여백 포함 범위만 잘라 찍기 → 임시 표시 제거."""
+    page.evaluate(_JS_MARK, {"marks": _marks(items), "badge": CAPTURE_BADGE, "badgeStyle": BADGE_STYLE, "temp": True})
+    clip = page.evaluate(_JS_TAB_CLIP, {
+        "idxs": [h["idx"] for h in items], "ctx": REVEAL_TAB_CONTEXT_PX,
+        "title": f"{LEGEND_TITLE} · {tag} · 탭 '{tab_text}' 을 눌러 연 화면 · hit {len(items)}건",
+        "lines": _tab_legend_lines(items) if CAPTURE_LEGEND else [], "boxStyle": LEGEND_BOX_STYLE})
+    if REVEAL_TAB_HIDE_FLOATING:
+        page.evaluate(_JS_HIDE_FLOATING)
+    try:
+        if clip:
+            _screenshot(page, out, full_page=True, clip=clip)
+        else:
+            _screenshot(page, out)
+    finally:
+        if REVEAL_TAB_HIDE_FLOATING:
+            page.evaluate(_JS_SHOW_FLOATING)
+        page.evaluate(_JS_CLEAR_TEMP)
+
+
 def _capture_revealed(page: Page, hit_items: list[dict], out_dir: Path, name_fmt: str, tag: str) -> dict[int, str]:
-    """숨은 hit 요소를 펼쳐(가장 가까운 보이는 조상에 hover) 뷰포트 캡처 → {요소 idx: 캡처 경로(_capture_ref)}.
-    name_fmt = 캡처 파일명 틀 — '{}' 자리에 REVEAL_CAPTURE_SUFFIX(+번호)가 들어간다."""
+    """숨은 hit 요소를 펼쳐 뷰포트 캡처 → {요소 idx: 캡처 경로(_capture_ref)}.
+    본문 요소는 먼저 안 열린 탭을 눌러 보고(CAPTURE_REVEAL_TABS, <캡처명>_tab.jpg),
+    아니면 가장 가까운 보이는 조상에 hover 해 메뉴를 펼친다(<캡처명>_menu.jpg).
+    name_fmt = 캡처 파일명 틀 — '{}' 자리에 REVEAL_TAB_SUFFIX / REVEAL_CAPTURE_SUFFIX(+번호)가 들어간다."""
     hidden = [it for it in hit_items if it.get("hidden")]
     done: dict[int, str] = {}
     shots = 0
@@ -853,6 +1084,19 @@ def _capture_revealed(page: Page, hit_items: list[dict], out_dir: Path, name_fmt
             continue
         if shots >= REVEAL_MAX_CAPTURES:
             break
+        if CAPTURE_REVEAL_TABS and not it["global_ui"]:
+            try:
+                shown, tab_text = _reveal_by_tab(page, it, hidden, done, tag)
+                if shown:
+                    shots += 1
+                    out = out_dir / name_fmt.format(REVEAL_TAB_SUFFIX + ("" if shots == 1 else str(shots)))
+                    _shoot_tab(page, [h for h in hidden if h["idx"] in shown], out, tag, tab_text)
+                    rel = _capture_ref(out)
+                    for i in shown:
+                        done[i] = rel
+                    continue
+            except Exception as e:
+                logger.debug("[%s] 탭 펼친 캡처 실패: %s", tag, str(e).splitlines()[0][:150])
         try:
             target = page.evaluate(_JS_REVEAL_TARGET, it["idx"])
             if not target:
@@ -872,7 +1116,7 @@ def _capture_revealed(page: Page, hit_items: list[dict], out_dir: Path, name_fmt
             out = out_dir / name_fmt.format(suffix)
             page.evaluate(_JS_MARK, {"marks": _marks([h for h in hidden if h["idx"] in shown]),
                                      "badge": CAPTURE_BADGE, "badgeStyle": BADGE_STYLE, "temp": True})
-            page.screenshot(path=str(out))          # 펼친 상태는 뷰포트만 (전체 캡처는 스크롤하며 메뉴가 닫힌다)
+            _screenshot(page, out)                  # 펼친 상태는 뷰포트만 (전체 캡처는 스크롤하며 메뉴가 닫힌다)
             page.evaluate(_JS_CLEAR_TEMP)
             rel = _capture_ref(out)
             for i in shown:
@@ -980,14 +1224,17 @@ def check_site(sitecode: str, page_key: str, rules, capture: bool, run_date: str
             fp, design = design_fingerprint(desc or {})
             # GNB/Footer 는 페이지 공통 — 다른 페이지에서 이미 찍었으면 다시 안 찍는다
             seen_fps = (known_site if it["global_ui"] else known).get(ekey, {})
+            # 지문이 달라도 크기만 조금 다른(또는 숨김 상태 0×0) 같은 디자인이면 그 기록을 쓴다
+            match_fp = fp if fp in seen_fps else next(
+                (f for f, inf in seen_fps.items() if _same_design(design, inf.get("design") or {})), fp)
             # 기록에 있어도 그 캡처 파일이 실제로 없으면(지워짐·옮겨짐) 다시 찍는다
-            if fp in seen_fps and (not VERIFY_CAPTURE_EXISTS or _capture_exists(seen_fps[fp].get("capture", ""))):
+            if match_fp in seen_fps and (not VERIFY_CAPTURE_EXISTS or _capture_exists(seen_fps[match_fp].get("capture", ""))):
                 it["kind"] = "known"
-                info = seen_fps[fp]
+                info = seen_fps[match_fp]
                 prev_captures.append((info.get("first_seen", ""), info.get("capture", "")))
                 link_kind.setdefault(ekey, "known")
                 continue
-            kind = "recapture" if fp in seen_fps else "changed" if seen_fps else "new"
+            kind = "recapture" if match_fp in seen_fps else "changed" if seen_fps else "new"
             it["kind"] = kind
             new_elems.setdefault((ekey, fp), {"key": ekey, "fp": fp, "kind": kind, "design": design,
                                               "idxs": []})["idxs"].append(it["idx"])
@@ -1016,9 +1263,9 @@ def check_site(sitecode: str, page_key: str, rules, capture: bool, run_date: str
             new_idxs = {i for el in new_elems.values() for i in el["idxs"]}
             try:
                 # 날짜 폴더 없이 sitecode 폴더에 모은다 (1회성 캡처라 날짜별로 나눌 만큼 쌓이지 않는다)
-                # 파일명 = <sitecode>_<page>[_menu]_<YYMMDD>_<HHMM>.png — 날짜·시각은 항상 맨 뒤
+                # 파일명 = <sitecode>_<page>[_menu]_<YYMMDD>_<HHMM>.jpg — 날짜·시각은 항상 맨 뒤
                 out_dir = CAPTURE_DIR / sitecode
-                name_fmt = f"{sitecode}_{page_key}{{}}_{datetime.now():{CAPTURE_TIME_FORMAT}}.png"
+                name_fmt = f"{sitecode}_{page_key}{{}}_{datetime.now():{CAPTURE_TIME_FORMAT}}{CAPTURE_IMAGE_EXT}"
                 out = out_dir / name_fmt.format("")
                 out_dir.mkdir(parents=True, exist_ok=True)
                 if CAPTURE_HIDE_SELECTOR:
@@ -1035,7 +1282,10 @@ def check_site(sitecode: str, page_key: str, rules, capture: bool, run_date: str
                         page.evaluate(_JS_LEGEND, {
                             "title": f"{LEGEND_TITLE} · {tag} · hit {len(hit_items)}건 · 키워드: {', '.join(matched_rules)}",
                             "lines": _legend_lines(hit_items, revealed), "boxStyle": LEGEND_BOX_STYLE})
-                    page.evaluate(_JS_MARK, {"marks": _marks([it for it in hit_items if not it["hidden"]]),
+                    # 테두리는 지금 실제로 보이는 요소에 — 탭을 눌러 열어 둔 패널 안 요소도 같이 표시된다
+                    visible_now = set(page.evaluate(_JS_VISIBLE_IDXS, [it["idx"] for it in hit_items]))
+                    page.evaluate(_JS_MARK, {"marks": _marks([it for it in hit_items
+                                                              if not it["hidden"] or it["idx"] in visible_now]),
                                              "badge": CAPTURE_BADGE, "badgeStyle": BADGE_STYLE, "temp": False})
                     if CAPTURE_SETTLE_MS and CAPTURE_FULL_PAGE:
                         # 전체 캡처는 순간적으로 화면 높이를 페이지 전체로 늘려 찍는데, 그때 KV 가 이미지를 다시 골라
@@ -1043,7 +1293,7 @@ def check_site(sitecode: str, page_key: str, rules, capture: bool, run_date: str
                         full_h = page.evaluate("() => document.documentElement.scrollHeight")
                         page.set_viewport_size({"width": BROWSER_VIEWPORT["width"], "height": int(full_h)})
                         page.wait_for_timeout(CAPTURE_SETTLE_MS)
-                    page.screenshot(path=str(out), full_page=CAPTURE_FULL_PAGE)
+                    _screenshot(page, out, full_page=CAPTURE_FULL_PAGE)
                     main_rel = _capture_ref(out)
                 shots = list(dict.fromkeys(([main_rel] if main_rel else []) + list(revealed.values())))
             except Exception as e:

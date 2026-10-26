@@ -1,5 +1,5 @@
 # promo_link_checker  
-<sub>2026-10-07  Jonghyun Park w/ Claude</sub>  
+<sub>2026-10-26  Jonghyun Park w/ Claude</sub>  
 국가별 **home · 프로모션(offer) 페이지의 클릭 가능한 요소** 중에 타겟 캠페인 링크가 걸려 있는지 매일 확인하고,
 결과를 `_daily_report.xlsx` 에 하루 1블록씩 누적하는 도구. 캡처는 **처음 보는 hit 요소, 또는 디자인이
 바뀐 요소가 있을 때만 1회** 찍는다(매일 누적 캡처하지 않음).
@@ -79,11 +79,13 @@ offer
   리포트에는 `[GNB/Footer]` 태그가 붙어 구분된다.
 - `EXCLUDE_HIT_SELECTOR` — 이 선택자 안(또는 자신)의 링크는 키워드가 맞아도 hit 에서 뺀다. 기본값은 채팅봇 위젯
   프로모 배너(`[class*='rcw-promo']`) — 닫힌 위젯 안이라 화면에 안 보이는데, 배너 이미지만 바뀌어도 디자인변경으로
-  재캡처돼 테두리 없는 캡처만 쌓였다. 빈 문자열이면 제외 안 함.
+  재캡처돼 테두리 없는 캡처만 쌓였다. Insider 개인화 팝업 링크(`.ins-element-link`, `.ins-content-link`)도
+  같은 이유로 제외한다 — 0×0 레이어인데 디자인변경으로 재캡처됐다. 빈 문자열이면 제외 안 함.
 - `CAPTURE_ON_HIT` / `CAPTURE_FULL_PAGE` — 캡처 on/off, 전체 페이지 여부.
+- `CAPTURE_IMAGE_EXT` / `CAPTURE_JPEG_QUALITY` — 캡처 형식(기본 `.jpg`, 품질 82). `.png` 로 바꾸면 무손실로 저장한다.
 - 캡처 중복 방지 — 아래 "5. 캡처 규칙" 참고 (`CAPTURE_STATE_NAME`, `FINGERPRINT_*`, `HIGHLIGHT_*`).
-- 캡처 표시 — `CAPTURE_LEGEND`(맨 위 범례 박스) / `CAPTURE_BADGE`(번호 배지) / `CAPTURE_REVEAL_HIDDEN`(접힌 메뉴 펼쳐 캡처)
-  on/off, `REVEAL_HOVER_WAIT_MS`·`REVEAL_MAX_CAPTURES` 등. 아래 "5. 캡처 규칙 › 캡처에서 hit 요소 찾기" 참고.
+- 캡처 표시 — `CAPTURE_LEGEND`(맨 위 범례 박스) / `CAPTURE_BADGE`(번호 배지) / `CAPTURE_REVEAL_HIDDEN`(접힌 메뉴 펼쳐 캡처) /
+  `CAPTURE_REVEAL_TABS`(안 열린 탭 눌러 캡처) on/off, `REVEAL_HOVER_WAIT_MS`·`REVEAL_TAB_WAIT_MS`·`REVEAL_MAX_CAPTURES` 등. 아래 "5. 캡처 규칙 › 캡처에서 hit 요소 찾기" 참고.
 - `COOKIE_CONSENT_SELECTORS` — 쿠키 배너 동의 버튼 셀렉터 목록. 사이트마다 배너가 달라(TrustArc / 자체 `cookie-bar`)
   여러 개를 두고, 먼저 보이는 것 하나를 누른다. 새 종류의 배너가 캡처를 가리면 여기에 한 줄 추가한다.
 - `CAPTURE_HIDE_SELECTOR` — 캡처 직전에 숨길 요소. 동의 버튼을 못 눌러 배너가 남아도 hit 요소를 가리지 않게 한다.
@@ -117,15 +119,16 @@ promo_link_checker/
 
 <CAPTURE_DIR>/                        ← 캡처 저장 폴더 (절대경로 상수, output 과 별개 위치)
 └── <sitecode>/
-    ├── <sitecode>_<page>_<YYMMDD>_<HHMM>.png       ← 화면에 보이는 새 요소·디자인 변경이 있을 때만 (전체 페이지)
-    └── <sitecode>_<page>_menu_<YYMMDD>_<HHMM>.png  ← 새 hit 요소가 접힌 메뉴 안에 있을 때, 메뉴를 펼친 화면
+    ├── <sitecode>_<page>_<YYMMDD>_<HHMM>.jpg       ← 화면에 보이는 새 요소·디자인 변경이 있을 때만 (전체 페이지)
+    ├── <sitecode>_<page>_menu_<YYMMDD>_<HHMM>.jpg  ← 새 hit 요소가 접힌 메뉴 안에 있을 때, 메뉴를 펼친 화면
+    └── <sitecode>_<page>_tab_<YYMMDD>_<HHMM>.jpg   ← 새 hit 요소가 안 열린 탭 안에 있을 때, 탭을 눌러 연 화면
 ```
 
 캡처는 `CAPTURE_DIR`(절대경로) 아래 **sitecode 폴더**에 모은다 (v1.2, 날짜 폴더 없음). 리포트·기록·로그는
 `output\` 에 그대로 남는다. 요소당 1회만 찍으므로 폴더 안에는 새 요소·디자인 변경이
 있었던 날의 캡처만 쌓이고, 찍은 날짜·시각은 파일명 맨 뒤(`_<YYMMDD>_<HHMM>`, `CAPTURE_TIME_FORMAT`)에 남는다.
 `CAPTURE_DIR` 이 `output\` 밖이면 리포트·기록에는 캡처가 절대경로로 적힌다.
-아래에서 `_menu.png` 라고 부르는 것은 이 `…_menu_<YYMMDD>_<HHMM>.png` 파일이다.
+아래에서 `_menu.jpg` / `_tab.jpg` 라고 부르는 것은 이 `…_menu_<YYMMDD>_<HHMM>.jpg` / `…_tab_<YYMMDD>_<HHMM>.jpg` 파일이다.
 
 ### _daily_report.xlsx
 | A | B | C | D | E | F | G … |
@@ -135,11 +138,11 @@ promo_link_checker/
 - 행 = (sitecode, page). 한 국가가 home·offer 2행.
 - **최신 날짜 블록이 항상 D~F열**이고, 과거 날짜는 오른쪽으로 밀린다. 열어서 A~F 만 보면 오늘 상태다.
 - 결과 값: `O`(녹색, hit) / `X`(없음) / `접근실패(HTTP 404·redirect·timeout·error)`(빨강) / `(미실행)`.
-- `O` 셀은 **캡처 PNG 로 하이퍼링크**된다 — 그날 새로 찍었으면 새 캡처, 아니면 그 요소의 기존 캡처.
-  새 요소가 전부 접힌 메뉴 안이면 전체 캡처 대신 **메뉴를 펼친 캡처**(`_menu.png`)로 연결된다.
+- `O` 셀은 **캡처 이미지로 하이퍼링크**된다 — 그날 새로 찍었으면 새 캡처, 아니면 그 요소의 기존 캡처.
+  새 요소가 전부 접힌 메뉴·안 열린 탭 안이면 전체 캡처 대신 **펼친 캡처**(`_menu.jpg` / `_tab.jpg`)로 연결된다.
   GNB/Footer 요소는 sitecode 당 한 번만 찍으므로, offer 행의 `O` 가 home 에서 찍은 캡처로 연결될 수 있다.
 - 매칭링크 셀: `URL (링크 텍스트) [GNB/Footer] [숨김] 🆕신규 / 🔄디자인변경 / ♻재캡처` + `📷 새 캡처: …`(+ `📷 추가 캡처: …`)
-  또는 `📷 기존 캡처: …`. `[숨김]` = 접힌 메뉴·안 보이는 슬라이드 안이라 화면에 안 보이는 요소.
+  또는 `📷 기존 캡처: …`. `[숨김]` = 접힌 메뉴·안 열린 탭·안 보이는 슬라이드 안이라 화면에 안 보이는 요소.
 - 같은 날 다시 돌리면 그 날짜 블록을 덮어쓴다(열이 늘지 않음). `--sitecodes`/`--pages` 로 일부만 돌리면
   대상 밖 행의 그날 값은 보존된다.
 - 저장은 임시파일 → 무결성 확인 → 교체 방식이라 저장 중 실패해도 누적 이력이 안 날아간다.
@@ -154,7 +157,7 @@ promo_link_checker/
 
   | 항목 | 내용 |
   |---|---|
-  | `size` | 요소 크기 (`FINGERPRINT_SIZE_STEP`=20px 단위 반올림) |
+  | `size` | 요소 크기 (`FINGERPRINT_SIZE_STEP`=20px 단위 반올림). 비교할 땐 허용오차가 있다 — 아래 판정 참고 |
   | `classes` | class 목록 — `active`·`loaded`·`swiper-slide-*` 같은 상태 class(`FINGERPRINT_CLASS_IGNORE`)는 제외 |
   | `images` | 안쪽 `<img>` src · 배경 이미지 URL (쿼리 제외, data: placeholder 제외) |
   | `text` | 요소 텍스트 — **숫자는 지운다** (가격·날짜만 바뀐 건 디자인 변경으로 안 본다) |
@@ -162,21 +165,33 @@ promo_link_checker/
 - 판정:
   - 처음 보는 링크 → **🆕신규**, 캡처
   - 본 적 있는 링크인데 지문이 다름 → **🔄디자인변경**, 캡처
+    단 class·이미지·텍스트가 같고 크기 차이가 가로·세로 각각 `FINGERPRINT_SIZE_TOLERANCE`(20px) 이하이거나,
+    어느 한쪽이 0×0(안 열린 탭·캐러셀 안 숨김 상태)이면 **같은 디자인**으로 본다 —
+    반올림 경계(예: 90px)에서 1~2px 흔들려 80 ↔ 100 으로 갈리던 재캡처 방지
   - 링크·지문 모두 본 적 있고 **그 캡처 파일이 실제로 있음** → 캡처 생략 (리포트는 기존 캡처로 링크)
   - 링크·지문은 본 적 있는데 캡처 파일이 없음(지워짐·옮겨짐) → **♻재캡처**, 다시 찍고 기록을 새 캡처로 바꾼다
-    (`VERIFY_CAPTURE_EXISTS`, 기본 `True`). 잘못 찍힌 캡처를 다시 받으려면 **그 PNG 를 지우면** 다음 실행에서 다시 찍힌다.
+    (`VERIFY_CAPTURE_EXISTS`, 기본 `True`). 잘못 찍힌 캡처를 다시 받으려면 **그 캡처 파일을 지우면** 다음 실행에서 다시 찍힌다.
 - 한 페이지에 **화면에 보이는** 신규/변경 요소가 하나라도 있으면 그 페이지를 1장 찍고, 그 화면의 hit 요소에는 전부
   **빨간 실선** 테두리를 그린다. 신규/변경/기존 구분은 색이 아니라 **범례의 표기**로 한다
   (색으로도 나누려면 `HIGHLIGHT_KNOWN_STYLE`·`BADGE_COLOR_KNOWN` 값을 바꾼다).
-- 신규/변경 요소가 **전부 접힌 메뉴 안**이면 전체 캡처는 생략하고 메뉴를 펼친 `_menu.png` 만 남긴다 (v1.2).
+- 신규/변경 요소가 **전부 접힌 메뉴·안 열린 탭 안**이면 전체 캡처는 생략하고 펼친 `_menu.jpg` / `_tab.jpg` 만 남긴다 (v1.2).
   전체 캡처에는 테두리가 하나도 없어 볼 게 없기 때문. 메뉴를 하나도 못 펼쳤을 때만 범례를 남기려고 전체 캡처를 찍는다.
 - **캡처에서 hit 요소 찾기** (v1.1):
   - 캡처 맨 위 **범례 박스**에 hit 요소를 한 줄씩 적는다 — `번호 [본문|GNB/Footer] 링크 텍스트 → URL (신규/디자인변경/기존)`.
   - 화면에 보이는 요소는 테두리 왼쪽 위에 범례와 같은 **번호 배지**가 붙는다.
   - 접힌 GNB 메뉴 안처럼 **화면에 안 보이는 요소**는 전체 캡처에 테두리가 없다(범례에 `⚠ 화면에 안 보임` 표기).
     이때는 그 요소의 가장 가까운 보이는 조상(GNB 1단계 메뉴 등)에 마우스를 올려 메뉴를 펼친 뒤
-    **현재 화면을 `_menu.png` 로** 찍는다. 마우스를 올려도 안 나타나면(캐러셀의 안 보이는 슬라이드 등) 건너뛴다.
+    **현재 화면을 `_menu.jpg` 로** 찍는다. 마우스를 올려도 안 나타나면(캐러셀의 안 보이는 슬라이드 등) 건너뛴다.
     이미 찍은 적 있는 숨은 요소 때문에 메뉴를 다시 펼쳐 찍지는 않는다.
+  - **안 열린 탭 안 요소** (`CAPTURE_REVEAL_TABS`): 본문 요소는 hover 전에 먼저 그 요소를 품은 탭 패널의
+    탭 버튼을 눌러 연다 → 요소를 화면 가운데로 스크롤 → 테두리·배지 → **`_tab.jpg` 로** 찍는다.
+    찍는 범위 = 테두리 친 요소들을 감싼 영역 + 위아래 `REVEAL_TAB_CONTEXT_PX`(기본 700px) — 앞뒤 콘텐츠가 뭔지 보이게.
+    그 바로 위에 전체 캡처와 같은 **범례 박스**(`… · 탭 '<탭명>' 을 눌러 연 화면`, 번호별 링크)를 붙인다.
+    탭은 `aria-controls` / `href="#패널id"` / `data-target` / `aria-labelledby` 로 찾고, 없으면 같은 개수의 탭 버튼 목록에서
+    패널 순번으로 고른다. 페이지 이동을 막으려고 button · `[role=tab]` · href 가 `#`/`javascript:`/없음 인 `<a>` 만 누른다.
+    찍는 순간에만 화면에 떠 있는(`position: fixed`) 팝업·채팅 위젯을 숨긴다(`REVEAL_TAB_HIDE_FLOATING`).
+  - 테두리는 요소 outline 과 함께 **맨 위 레이어에 같은 사각 프레임**을 한 겹 더 그린다 — 부모가 overflow 로 outline 을
+    잘라내는 카드형 링크도 테두리가 보이게. 전체 캡처의 테두리는 그 시점에 실제로 보이는 요소 기준이다.
   - 순서는 펼친 캡처 → 범례 삽입 → 전체 캡처. 범례를 먼저 넣으면 GNB 메뉴가 hover 로 열리지 않는다.
 - 기록은 `output/_capture_state.json`. **캡처에 성공했을 때만** 기록한다(실패하면 다음 실행에서 다시 시도).
   `--no-capture` 로 돌린 날도 기록하지 않는다. 파일을 지우면 모든 요소를 처음부터 다시 캡처한다.
@@ -226,5 +241,5 @@ Get-ScheduledTask -TaskName "promo_link_checker_<캠페인>" | Get-ScheduledTask
   기다린 뒤 다시 판정한다 (`RESCROLL_HIDDEN`). 크기 0 인 복제본(display:none)·GNB/Footer 요소는 제외.
 - 전체 캡처는 화면 높이를 페이지 전체로 늘려 찍는데, 그 순간 KV 가 이미지를 다시 골라 저화질 미리보기가 찍힐 수 있다.
   그래서 화면 높이를 미리 늘려 두고 `CAPTURE_SETTLE_MS`(기본 1.5초) 기다렸다가 찍는다.
-- GNB 메가메뉴처럼 화면에 안 보이는 링크가 hit 이면 메뉴를 펼친 `_menu.png` 에 표시된다 (전체 캡처에는 테두리가 없다).
+- GNB 메가메뉴처럼 화면에 안 보이는 링크가 hit 이면 메뉴를 펼친 `_menu.jpg` 에 표시된다 (전체 캡처에는 테두리가 없다).
   마우스를 올려서 열리는 메뉴만 펼칠 수 있다 — 클릭해야 열리는 메뉴·캐러셀 슬라이드는 범례와 리포트 `[숨김]` 태그로만 알 수 있다.
