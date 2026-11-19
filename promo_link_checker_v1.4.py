@@ -1,15 +1,14 @@
-# promo_link_checker_v1.3.py
-# 2026-10-26  Jonghyun Park w/ Claude
+# promo_link_checker_v1.4.py
+# 2026-11-19  Jonghyun Park w/ Claude
+# updated: 2026-11-19 — v1.4: 한 번도 hit 된 적 없던 sitecode 가 처음 hit 되면 메일로 알린다 (MAIL_ON_FIRST_HIT) —
+#                       페이지 URL · 매칭 링크 · 캡처 이미지(본문 인라인 + 원본 첨부)를 로컬 Outlook 으로 자기 자신에게 보내고,
+#                       받은 알림 메일은 MAIL_MOVE_TO_FOLDER(받은편함 하위 폴더)로 옮긴다. --no-mail 로 그 실행만 끌 수 있다.
+#                       "첫 hit" = 실행 시작 시점의 캡처 기록(_capture_state.json)에 그 sitecode 가 아예 없던 경우.
 # updated: 2026-10-26 — 화면에서 안 바뀐 요소가 "디자인변경"으로 재캡처되던 문제 2건 수정 —
 #                       (1) 크기만 반올림 경계(예: 90px)에서 흔들려 지문이 달라지던 것: class·이미지·텍스트가 같고
 #                           크기 차이가 FINGERPRINT_SIZE_TOLERANCE(20px) 이하이거나 한쪽이 0×0(숨김 상태)이면 같은 디자인으로 본다
 #                       (2) Insider 개인화 팝업 링크(0×0, 화면에 안 보임)를 EXCLUDE_HIT_SELECTOR 로 hit 에서 제외
 #                       캡처를 JPG(품질 82)로 저장 (CAPTURE_IMAGE_EXT · CAPTURE_JPEG_QUALITY) — 다른 캡처 도구와 형식 통일, 용량 절감
-# updated: 2026-10-14 — 숨은 본문 hit 요소가 **안 열린 탭 패널** 안에 있으면 그 탭을 눌러 보이게 한 뒤 테두리·배지를 그려
-#                       <캡처명>_tab.png 를 남긴다 (CAPTURE_REVEAL_TABS) — 요소 위아래 REVEAL_TAB_CONTEXT_PX(700px) 범위 + 맨 위 범례. 탭은 aria-controls / href="#패널id" /
-#                       aria-labelledby 로 찾고, 없으면 같은 개수의 탭 버튼 목록에서 패널 순번으로 고른다.
-#                       전체 캡처의 테두리도 "그 시점에 실제로 보이는 요소" 기준으로 그린다 (탭이 열린 채면 같이 표시).
-#                       (안 열린 탭 안 링크가 [숨김] 으로만 남던 문제)
 # (이전 버전 이력은 git history / GitHub Releases 참조 — 헤더에는 최근 2개 항목만 남긴다)
 r"""
 promo_link_checker — 국가별 홈 · 프로모션(offer) 페이지의 클릭 가능한 요소 중에
@@ -33,10 +32,11 @@ promo_link_checker — 국가별 홈 · 프로모션(offer) 페이지의 클릭 
   경로가 EXCLUDE_LINK_EXTENSIONS(기본 .pdf)로 끝나는 링크는 키워드가 맞아도 제외한다 (약관·고지 PDF).
 
 사용 예:
-  python promo_link_checker_v1.3.py
-  python promo_link_checker_v1.3.py --sitecodes ae,hq
-  python promo_link_checker_v1.3.py --pages home
-  python promo_link_checker_v1.3.py --sitecodes uk --debug --no-capture
+  python promo_link_checker_v1.4.py
+  python promo_link_checker_v1.4.py --sitecodes ae,hq
+  python promo_link_checker_v1.4.py --pages home
+  python promo_link_checker_v1.4.py --sitecodes uk --debug --no-capture
+  python promo_link_checker_v1.4.py --no-mail          (첫 hit 메일 알림을 이번 실행만 끔)
 
 출력 (스크립트 폴더 기준):
   output/_daily_report.xlsx                      일일 누적 리포트 (유일한 상시 산출물)
@@ -45,13 +45,14 @@ promo_link_checker — 국가별 홈 · 프로모션(offer) 페이지의 클릭 
   output/_capture_state.json                     이미 캡처한 요소 기록 (지우면 처음부터 다시 캡처)
   output/_run_latest.log                         매 실행 덮어씀 (pythonw 스케줄 실행 추적용)
 
-의존성: playwright, openpyxl   (설치 후 `python -m playwright install chromium` 1회)
+의존성: playwright, openpyxl, pywin32(메일 알림을 켤 때만)   (설치 후 `python -m playwright install chromium` 1회)
 """
 from __future__ import annotations
 
 import argparse
 import csv
 import hashlib
+import html
 import json
 import logging
 import os
@@ -309,6 +310,23 @@ KEEP_RESULT_CSV: bool = False
 LOG_TO_FILE: bool = True
 RUN_LOG_NAME: str = "_run_latest.log"
 
+# ─── 메일 알림 ─────────────────────────────────────────────────────
+# 한 번도 hit 된 적 없던 sitecode(실행 시작 시점의 캡처 기록에 그 sitecode 가 아예 없음)가 처음 hit 되면 메일을 보낸다.
+# 로컬 Outlook 앱으로 보낸다 (pywin32 필요, 별도 인증 없음). 메일이 실패해도 경고만 남기고 검사 결과에는 영향이 없다.
+# ⚠ 캡처에 성공한 hit 만 알린다 — 캡처를 끄면(CAPTURE_ON_HIT=False · --no-capture) 기록이 안 남아 알림도 가지 않는다.
+MAIL_ON_FIRST_HIT: bool = False
+# 받는 사람 (여러 명이면 세미콜론). 비우면 Outlook 기본 계정 = 자기 자신에게 보낸다.
+MAIL_TO: str = ""
+# 메일 제목 맨 앞에 붙는 말. 아래 폴더 이동 대상도 이 접두로 찾으니 다른 메일 제목과 겹치지 않게 적는다.
+MAIL_SUBJECT_PREFIX: str = "[promo_link_checker]"
+# 받은 알림 메일을 옮길 폴더 — 받은편함 기준 하위 경로("/" 구분, 예: "Alerts/Promo"). 없으면 만든다. 빈 문자열이면 안 옮긴다.
+MAIL_MOVE_TO_FOLDER: str = ""
+# 보낸 메일이 받은편함에 도착하기를 기다리는 상한(초). 그 안에 안 오면 다음 실행 때 옮긴다.
+MAIL_MOVE_WAIT_SEC: int = 60
+# 본문에 넣는 캡처 이미지 가로폭(px) / sitecode 당 넣을 캡처 최대 장수 (넘는 건 경로만 적는다)
+MAIL_INLINE_IMAGE_WIDTH: int = 700
+MAIL_MAX_IMAGES_PER_SITE: int = 3
+
 # ─── 브라우저 ──────────────────────────────────────────────────────
 MAX_WORKERS: int = 4
 BROWSER_HEADLESS: bool = True
@@ -371,6 +389,12 @@ REPORT_DAY_HEADERS = ("결과", "매칭키워드", "매칭링크")
 RESULT_HIT, RESULT_MISS = "O", "X"
 RESULT_FAIL_PREFIX = "접근실패"
 RESULT_NOT_RUN = "(미실행)"
+# Outlook (메일 알림)
+_OL_MAIL_ITEM = 0
+_OL_FOLDER_INBOX = 6
+_MAPI_ATTACH_CONTENT_ID = "http://schemas.microsoft.com/mapi/proptag/0x3712001F"
+_MAIL_MOVE_SCAN_LIMIT = 200      # 받은편함에서 최근 몇 통까지 볼지
+_MAIL_MOVE_POLL_SEC = 5
 
 _RE_NON_WORD = re.compile(r"[\W_]+", re.UNICODE)
 
@@ -1352,6 +1376,147 @@ def check_site_with_retry(sitecode: str, page_key: str, rules, capture: bool, ru
                    detail=last_error)
 
 
+# ─── 메일 알림 (처음 hit 된 sitecode) ──────────────────────────────
+
+def _capture_path(ref: str) -> Path:
+    """_capture_ref 형식(OUTPUT_DIR 기준 상대경로 또는 절대경로) → 실제 경로."""
+    path = Path(ref)
+    return path if path.is_absolute() else OUTPUT_DIR / path
+
+
+def _first_hit_html(first_hits: dict[str, list[dict]]) -> tuple[str, list[tuple[str, Path]]]:
+    """메일 본문 HTML 과 인라인으로 넣을 이미지 [(content-id, 경로)] 를 만든다. first_hits = {sitecode: [결과 행, ...]}"""
+    esc = html.escape
+    parts = ['<div style="font-family:Segoe UI,Malgun Gothic,sans-serif;font-size:10.5pt">',
+             f"<p>지금까지 hit 가 없던 sitecode <b>{len(first_hits)}개</b>에서 타겟 링크가 처음 발견됐습니다.</p>"]
+    images: list[tuple[str, Path]] = []
+    for sc in sorted(first_hits):
+        parts.append(f'<h2 style="margin:18px 0 6px;border-bottom:2px solid #c00">{esc(sc)}</h2>')
+        shots: list[str] = []
+        for row in first_hits[sc]:
+            url = row.get("final_url") or row.get("url") or ""
+            parts.append(f'<p style="margin:8px 0 2px"><b>{esc(row.get("page", ""))}</b> — '
+                         f'<a href="{esc(url, quote=True)}">{esc(url)}</a><br>'
+                         f'키워드: {esc(row.get("keywords", ""))}</p>')
+            lines = [ln for ln in (row.get("links") or "").split("\n") if ln.strip()]
+            if lines:
+                parts.append('<ul style="margin:2px 0 8px">')
+                for ln in lines:
+                    link, _, rest = ln.partition(" ")
+                    if link.startswith("http"):
+                        parts.append(f'<li><a href="{esc(link, quote=True)}">{esc(link)}</a> {esc(rest)}</li>')
+                    else:
+                        parts.append(f"<li>{esc(ln)}</li>")
+                parts.append("</ul>")
+            for ref in [row.get("capture", "")] + (row.get("more_captures") or "").split("\n"):
+                if ref and ref not in shots:
+                    shots.append(ref)
+        for ref in shots[:MAIL_MAX_IMAGES_PER_SITE]:
+            path = _capture_path(ref)
+            if not path.is_file():
+                parts.append(f'<p style="color:#888">캡처 파일 없음: {esc(str(path))}</p>')
+                continue
+            cid = f"plc{len(images)}"
+            images.append((cid, path))
+            parts.append(f'<p style="margin:10px 0 2px;color:#666">{esc(str(path))}</p>'
+                         f'<p style="margin:0"><img src="cid:{cid}" width="{MAIL_INLINE_IMAGE_WIDTH}"></p>')
+        if len(shots) > MAIL_MAX_IMAGES_PER_SITE:
+            parts.append('<p style="color:#666">캡처 ' + str(len(shots) - MAIL_MAX_IMAGES_PER_SITE) + '장 더 있음:<br>'
+                         + "<br>".join(esc(str(_capture_path(r))) for r in shots[MAIL_MAX_IMAGES_PER_SITE:]) + "</p>")
+    parts.append(f'<p style="margin-top:18px;color:#888">리포트: {esc(str(OUTPUT_DIR / DAILY_REPORT_NAME))}</p></div>')
+    return "".join(parts), images
+
+
+def _outlook_self_address(ns) -> str:
+    """Outlook 기본 계정의 메일 주소 (Exchange 면 SMTP 주소)."""
+    user = ns.CurrentUser
+    try:
+        ex = user.AddressEntry.GetExchangeUser()
+        if ex is not None and ex.PrimarySmtpAddress:
+            return ex.PrimarySmtpAddress
+    except Exception:
+        pass
+    return user.Address
+
+
+def send_first_hit_mail(first_hits: dict[str, list[dict]], subject_tag: str = "") -> bool:
+    """처음 hit 된 sitecode 알림 메일을 보낸다. 실패하면 경고만 남기고 False."""
+    try:
+        import win32com.client
+    except ImportError:
+        logger.warning("⚠️ 메일 알림 생략 — pywin32 가 없습니다 (`pip install pywin32`).")
+        return False
+    try:
+        outlook = win32com.client.Dispatch("Outlook.Application")
+        ns = outlook.GetNamespace("MAPI")
+        body, images = _first_hit_html(first_hits)
+        mail = outlook.CreateItem(_OL_MAIL_ITEM)
+        mail.To = MAIL_TO.strip() or _outlook_self_address(ns)
+        mail.Subject = (f"{MAIL_SUBJECT_PREFIX}{subject_tag} 첫 hit {len(first_hits)}개 site: "
+                        f"{', '.join(sorted(first_hits))}")
+        mail.HTMLBody = body
+        for cid, path in images:
+            # 같은 파일을 두 번 붙인다 — content-id 를 단 것은 본문 안에 그려지고, 안 단 것은 첨부 목록에 원본으로 남는다
+            inline = mail.Attachments.Add(str(path))
+            inline.PropertyAccessor.SetProperty(_MAPI_ATTACH_CONTENT_ID, cid)
+            mail.Attachments.Add(str(path))
+        mail.Send()
+        logger.info("📧 첫 hit 메일 발송 — %s (이미지 %d장)", ", ".join(sorted(first_hits)), len(images))
+        return True
+    except Exception as e:
+        logger.warning("⚠️ 첫 hit 메일 발송 실패 — %s", str(e).splitlines()[0][:200] if str(e) else type(e).__name__)
+        return False
+
+
+def move_alert_mails(wait_sec: int = 0) -> int:
+    """받은편함에 있는 알림 메일(제목이 MAIL_SUBJECT_PREFIX 로 시작)을 MAIL_MOVE_TO_FOLDER 로 옮긴다. 옮긴 통수를 돌려준다.
+    wait_sec > 0 이면 방금 보낸 메일이 도착할 때까지 그만큼 기다린다."""
+    names = [n.strip() for n in MAIL_MOVE_TO_FOLDER.split("/") if n.strip()]
+    if not names:
+        return 0
+    try:
+        import win32com.client
+    except ImportError:
+        return 0
+    try:
+        ns = win32com.client.Dispatch("Outlook.Application").GetNamespace("MAPI")
+        inbox = ns.GetDefaultFolder(_OL_FOLDER_INBOX)
+        target = inbox
+        for name in names:
+            try:
+                target = target.Folders.Item(name)
+            except Exception:
+                target = target.Folders.Add(name)
+        deadline = time.monotonic() + max(0, wait_sec)
+        moved = 0
+        while True:
+            items = inbox.Items
+            items.Sort("[ReceivedTime]", True)
+            found = []
+            item = items.GetFirst()
+            for _ in range(_MAIL_MOVE_SCAN_LIMIT):
+                if item is None:
+                    break
+                try:
+                    if str(item.Subject or "").startswith(MAIL_SUBJECT_PREFIX):
+                        found.append(item)
+                except Exception:
+                    pass
+                item = items.GetNext()
+            for item in found:          # 다 찾은 뒤에 옮긴다 (도는 중에 옮기면 순서가 틀어진다)
+                item.Move(target)
+                moved += 1
+            if moved or time.monotonic() >= deadline:
+                break
+            time.sleep(_MAIL_MOVE_POLL_SEC)
+        if moved:
+            logger.info("📁 알림 메일 %d통을 '%s' 폴더로 옮김", moved, "/".join(names))
+        return moved
+    except Exception as e:
+        logger.warning("⚠️ 알림 메일 폴더 이동 실패 — %s", str(e).splitlines()[0][:200] if str(e) else type(e).__name__)
+        return 0
+
+
 # ─── 결과 CSV (안전망) ──────────────────────────────────────────────
 
 def _append_result_csv(path: Path, row: dict) -> None:
@@ -1546,7 +1711,7 @@ def write_daily_report(csv_path: Path, run_date: str, target_keys: list[tuple[st
 
 # ─── 실행 ──────────────────────────────────────────────────────────
 
-def run(sitecodes: list[str], pages: list[str], capture: bool, run_date: str) -> int:
+def run(sitecodes: list[str], pages: list[str], capture: bool, run_date: str, mail: bool = True) -> int:
     rules = parse_keyword_rules()
     if not rules:
         logger.error("❌ KEYWORDS 가 비어 있습니다 — 파일 상단에 한 줄 이상 적어 주세요.")
@@ -1571,6 +1736,9 @@ def run(sitecodes: list[str], pages: list[str], capture: bool, run_date: str) ->
     # 캡처 기록 — 워커에는 읽기 전용 스냅샷을 주고, 갱신·저장은 메인 스레드에서만 한다.
     # (같은 (sitecode, page) 는 한 실행에서 한 번만 돌므로 스냅샷으로 충분하다)
     capture_state = load_capture_state()
+    # 메일 알림용 — 캡처 기록이 하나라도 있는 sitecode. 여기에 없는 sitecode 가 이번 실행에서 hit 면 "첫 hit" 다.
+    seen_sites = {key.split("|", 1)[0] for key, bucket in capture_state.items() if bucket}
+    first_hits: dict[str, list[dict]] = {}      # sitecode → 이번 실행의 hit 행들 (home · offer)
     # GNB/Footer 판정용 sitecode 단위 기록 — 워커가 자기 sitecode 것만 고친다 (앞 페이지에서 찍은 요소를 다음 페이지에 알림)
     site_known = {sc: _site_known(capture_state, sc) for sc in sitecodes}
     completed = False
@@ -1628,6 +1796,8 @@ def run(sitecodes: list[str], pages: list[str], capture: bool, run_date: str) ->
                     }
                 save_capture_state(capture_state)
                 new_captures += 1
+                if row["sitecode"] not in seen_sites:
+                    first_hits.setdefault(row["sitecode"], []).append(row)
             if row["result"] == RESULT_HIT:
                 hits.append(tag)
                 snap = "📷 새로 캡처" if row["capture"] else "기존 캡처 있음 → 캡처 생략"
@@ -1648,6 +1818,11 @@ def run(sitecodes: list[str], pages: list[str], capture: bool, run_date: str) ->
                 csv_path.unlink()
             except OSError:
                 pass
+
+    if mail and MAIL_ON_FIRST_HIT:
+        sent = bool(first_hits) and send_first_hit_mail(first_hits)
+        # 보낸 직후에는 도착을 기다려 옮기고, 보낸 게 없어도 지난 실행에서 못 옮긴 메일이 있으면 옮긴다
+        move_alert_mails(MAIL_MOVE_WAIT_SEC if sent else 0)
 
     logger.info("✅ 완료 — HIT %d건 · 새 캡처 %d건%s", len(hits), new_captures,
                 f": {', '.join(sorted(hits))}" if hits else "")
@@ -1686,6 +1861,7 @@ def main() -> None:
     parser.add_argument("--sitecodes", default=None, help="쉼표 구분 sitecode (예: ae,hq). 미지정 시 SITECODES 전체")
     parser.add_argument("--pages", default=None, help="쉼표 구분 페이지 (예: home). 미지정 시 CHECK_PAGES")
     parser.add_argument("--no-capture", action="store_true", help="hit 여도 캡처하지 않음")
+    parser.add_argument("--no-mail", action="store_true", help="처음 hit 된 sitecode 가 있어도 메일을 보내지 않음")
     parser.add_argument("--debug", action="store_true", help="진단 로그")
     parser.add_argument("--run-date", default=None, help=argparse.SUPPRESS)   # 리포트 날짜 블록 테스트용 (MMDD)
     args = parser.parse_args()
@@ -1705,7 +1881,7 @@ def main() -> None:
     logger.info("🚀 promo_link_checker 시작")
     pages = parse_pages(args.pages.replace(",", "\n")) if args.pages else parse_pages()
     code = run(sitecodes, pages, CAPTURE_ON_HIT and not args.no_capture,
-               args.run_date or datetime.now().strftime("%m%d"))
+               args.run_date or datetime.now().strftime("%m%d"), mail=not args.no_mail)
     logger.info("⏱️ 총 소요 %d초", round(time.monotonic() - started))
     raise SystemExit(code)
 

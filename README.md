@@ -1,10 +1,10 @@
 # promo_link_checker  
-<sub>2026-10-26  Jonghyun Park w/ Claude</sub>  
+<sub>2026-11-19  Jonghyun Park w/ Claude</sub>  
 국가별 **home · 프로모션(offer) 페이지의 클릭 가능한 요소** 중에 타겟 캠페인 링크가 걸려 있는지 매일 확인하고,
 결과를 `_daily_report.xlsx` 에 하루 1블록씩 누적하는 도구. 캡처는 **처음 보는 hit 요소, 또는 디자인이
 바뀐 요소가 있을 때만 1회** 찍는다(매일 누적 캡처하지 않음).
 
-- 단일 파일 `promo_link_checker_v1.3.py` — 설정은 전부 상단 `사용자가 바꿔야 하는 부분` 블록.
+- 단일 파일 `promo_link_checker_v1.4.py` — 설정은 전부 상단 `사용자가 바꿔야 하는 부분` 블록.
 
 ---
 
@@ -12,6 +12,7 @@
 
 - Windows / Python 3.10+ / Chrome 설치
 - `pip install playwright openpyxl`
+- 메일 알림(`MAIL_ON_FIRST_HIT`)을 켤 때만: `pip install pywin32` + Outlook 데스크톱 앱
 - `python -m playwright install chromium` (최초 1회)
 
 ## 2. 설정 (파일 상단)
@@ -74,6 +75,28 @@ offer
 | `include_sitecode` | `False` 면 URL 에 sitecode 를 안 넣는다 (`cn`) |
 | `segments` | 페이지별로 그 사이트에서 쓸 슬러그 — `{"offer": "shop"}` (`hq`), `{"offer": "hero-products"}` (`ru`) |
 
+### 메일 알림 — 처음 hit 된 sitecode (v1.4)
+**한 번도 hit 된 적 없던 sitecode** 에서 타겟 링크가 처음 발견되면 메일로 알린다. 아직 캠페인을 시작하지 않은
+국가가 언제 시작했는지 리포트를 매일 열어 보지 않아도 알 수 있다.
+
+| 상수 | 의미 |
+|---|---|
+| `MAIL_ON_FIRST_HIT` | 알림 on/off |
+| `MAIL_TO` | 받는 사람(여러 명이면 세미콜론). 비우면 Outlook 기본 계정 = 자기 자신 |
+| `MAIL_SUBJECT_PREFIX` | 제목 맨 앞에 붙는 말. 폴더 이동 대상도 이 접두로 찾는다 |
+| `MAIL_MOVE_TO_FOLDER` | 받은 알림 메일을 옮길 폴더 — 받은편함 기준 하위 경로(`/` 구분). 없으면 만든다. 비우면 안 옮긴다 |
+| `MAIL_MOVE_WAIT_SEC` | 보낸 메일이 받은편함에 도착하기를 기다리는 상한(초) |
+| `MAIL_INLINE_IMAGE_WIDTH` / `MAIL_MAX_IMAGES_PER_SITE` | 본문 이미지 가로폭 / sitecode 당 넣을 캡처 장수 |
+
+- **"첫 hit" 판정** = 실행 시작 시점의 캡처 기록(`_capture_state.json`)에 그 sitecode 가 **아예 없는데** 이번 실행에서 hit.
+  home · offer 중 어느 쪽이든 한 번이라도 기록된 sitecode 는 다시 알리지 않는다. 한 실행에서 여러 sitecode 가 걸리면 메일 1통에 묶는다.
+- 메일 내용 = sitecode 별 페이지 URL · 매칭 키워드 · 매칭 링크 목록 · 캡처 이미지(**본문에 바로 보이고**, 원본도 첨부로 붙는다).
+- 로컬 Outlook 앱으로 보낸다(별도 인증 없음). 보낸 직후 받은편함에 도착하면 `MAIL_MOVE_TO_FOLDER` 로 옮기고,
+  제때 안 오면 다음 실행 때 옮긴다.
+- **캡처에 성공한 hit 만 알린다.** 캡처를 끄면(`CAPTURE_ON_HIT=False` · `--no-capture`) 기록이 안 남아 알림도 가지 않는다.
+- 메일 발송이 실패해도 경고 로그만 남고 검사 · 리포트에는 영향이 없다. 단 기록은 이미 남으므로 그 sitecode 는 다시 알리지 않는다
+  (`--no-mail` 로 돌린 실행에서 처음 hit 된 경우도 같다) — 로그의 `새로 캡처` 줄로 확인한다.
+
 ### 그 외
 - `EXCLUDE_GLOBAL_UI` — `True` 면 GNB/Footer 안 링크는 hit 에서 뺀다. 기본 `False`(페이지 전체)이고,
   리포트에는 `[GNB/Footer]` 태그가 붙어 구분된다.
@@ -99,18 +122,19 @@ offer
 ## 3. 실행
 
 ```bash
-python promo_link_checker_v1.3.py                    # SITECODES 전체
-python promo_link_checker_v1.3.py --sitecodes ae,hq # 일부 국가만
-python promo_link_checker_v1.3.py --pages home       # 일부 페이지만
-python promo_link_checker_v1.3.py --no-capture       # hit 여도 캡처 안 함
-python promo_link_checker_v1.3.py --debug            # 사이트별 클릭 요소 수 등 진단 로그
+python promo_link_checker_v1.4.py                    # SITECODES 전체
+python promo_link_checker_v1.4.py --sitecodes ae,hq # 일부 국가만
+python promo_link_checker_v1.4.py --pages home       # 일부 페이지만
+python promo_link_checker_v1.4.py --no-capture       # hit 여도 캡처 안 함
+python promo_link_checker_v1.4.py --no-mail          # 처음 hit 된 sitecode 가 있어도 메일 안 보냄
+python promo_link_checker_v1.4.py --debug            # 사이트별 클릭 요소 수 등 진단 로그
 ```
 
 ## 4. 출력
 
 ```
 promo_link_checker/
-├── promo_link_checker_v1.3.py
+├── promo_link_checker_v1.4.py
 ├── README.md
 └── output/
     ├── _daily_report.xlsx            ← 일일 누적 리포트
@@ -213,7 +237,7 @@ promo_link_checker/
 작업명 `promo_link_checker_<캠페인>`, 매일 **09:31 · 12:01**, `pythonw.exe` 직접 실행(콘솔 창 없음):
 
 ```powershell
-$script   = "<운영 폴더>\promo_link_checker_v1.3.py"
+$script   = "<운영 폴더>\promo_link_checker_v1.4.py"
 $action   = New-ScheduledTaskAction -Execute "C:\Python314\pythonw.exe" -Argument "`"$script`"" -WorkingDirectory (Split-Path $script)
 $trigger  = @("09:31", "12:01") | ForEach-Object { $t = New-ScheduledTaskTrigger -Daily -At $_; $t.EndBoundary = "2026-12-10T23:59:59"; $t }
 $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Hours 2) -MultipleInstances IgnoreNew
