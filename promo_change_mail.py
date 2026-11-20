@@ -1,7 +1,9 @@
 # promo_change_mail.py
 # 2026-11-20  Jonghyun Park w/ Claude
+# updated: 2026-11-20 — v1.3: 본문을 종류별 절로 나눔 (신규 절이 위, 디자인변경 절이 아래 — KINDS 순서),
+#   맨 위에 종류별 site 요약, 같은 표에서 반복되는 캡처는 "위 행과 같은 캡처" 로 표시,
+#   보낸 메일을 MAIL_MOVE_TO_FOLDER 로 옮길 때 최대 MOVE_WAIT_SEC 기다림, --test 메일도 옮김
 # updated: 2026-11-20 — v1.2: 디자인변경은 앞선 날짜 기록이 있을 때만 (같은 날 같은 링크의 다른 요소는 신규), 전 / 후 칸에 요소 설명 추가
-# updated: 2026-11-20 — v1.1: 비교표를 전 / 후 캡처 이미지를 한 행에 나란히 놓는 형식으로 변경 (속성값 비교 제거)
 # (이전 버전 이력은 git history / GitHub Releases 참조 — 헤더에는 최근 2개 항목만 남긴다)
 r"""
 promo_change_mail — promo_link_checker 가 새로 캡처한 클릭 요소(신규 · 디자인변경)를 모아 메일로 알린다.
@@ -20,9 +22,9 @@ sitecode 에서 새 배너가 붙거나 디자인이 바뀐 것은 캡처 · 리
   python promo_change_mail.py              보낼 게 있으면 보낸다
   python promo_change_mail.py --dry-run    보내지 않고 대상 · 본문만 확인 (output/_change_mail_preview.html)
   python promo_change_mail.py --day 2026-11-20 --resend   그날 요소를 보낸 기록과 상관없이 다시 보낸다
-  python promo_change_mail.py --test       본인에게만 [TEST] 로 보낸다 (보낸 기록 · 폴더 이동 없음)
+  python promo_change_mail.py --test       본인에게만 [TEST] 로 보낸다 (보낸 기록 안 남김)
 
-메일 본문 = sitecode 별 비교표 (페이지 · 구분 · 링크 · 전 · 후) — 전 / 후 칸에 요소 설명(날짜 · 카드 종류 · 크기 ·
+메일 본문 = 종류별 절(KINDS 순서: 신규 → 디자인변경) 안에 sitecode 별 비교표 (페이지 · 구분 · 링크 · 전 · 후) — 전 / 후 칸에 요소 설명(날짜 · 카드 종류 · 크기 ·
   이미지 파일명 / 텍스트)과 캡처 이미지를 나란히. 같은 캡처 쌍을 공유하는 요소는 한 행으로 묶는다.
   - 디자인변경: 같은 링크의 **앞선 날짜** 기록이 있을 때만. 같은 날 같은 링크로 함께 잡힌 다른 요소(이미지 카드 ·
     텍스트 카드 등)는 checker 가 디자인변경으로 적어도 신규로 본다.
@@ -59,6 +61,8 @@ SINCE_DAYS: int = 1
 # 제목 = checker 의 MAIL_SUBJECT_PREFIX + 아래 꼬리표. checker 접두를 그대로 쓰므로
 # checker 가 실행될 때 받은 메일을 MAIL_MOVE_TO_FOLDER 로 같이 옮긴다.
 SUBJECT_TAG: str = "[변경]"
+# 보낸 뒤 받은편함에 도착할 때까지 최대 몇 초 기다렸다가 checker 의 MAIL_MOVE_TO_FOLDER 로 옮길지
+MOVE_WAIT_SEC: int = 300
 # 원본 캡처를 첨부로도 붙일지 (False 면 본문 이미지만 — 메일 용량이 절반 정도)
 ATTACH_ORIGINALS: bool = True
 # 요소 텍스트를 목록에 몇 자까지 적을지
@@ -160,36 +164,67 @@ def build_html(m, by_site: dict[str, list[dict]], days: list[str]) -> tuple[str,
     parts = ['<div style="font-family:Segoe UI,Malgun Gothic,sans-serif;font-size:10.5pt">',
              f"<p>{esc(period)} 새로 캡처된 클릭 요소 <b>{sum(counts.values())}건</b> ({esc(summary)}), "
              f"sitecode <b>{len(by_site)}개</b></p>"]
+    # 맨 위 요약 — 종류별로 어느 site 인지 (site 옆 숫자 = 요소 수)
+    lines = []
+    for kind in KINDS:
+        per = {sc: sum(1 for r in rows if r["kind"] == kind) for sc, rows in by_site.items()}
+        per = {sc: n for sc, n in per.items() if n}
+        if per:
+            sites_s = ", ".join(f"{sc}({n})" for sc, n in sorted(per.items()))
+            lines.append(f'<li><b style="color:{_KIND_COLORS.get(kind, "#666")}">{esc(m.KIND_LABELS.get(kind, kind))}</b> '
+                         f"{len(per)}개 site: {esc(sites_s)}</li>")
+    parts.append(f'<ul style="margin:4px 0 10px">{"".join(lines)}</ul>')
     images: list[tuple[str, Path]] = []
     cid_of: dict[Path, str] = {}       # 같은 캡처는 메일에 한 번만 싣는다
     td = 'style="border:1px solid #ccc;padding:4px 6px;vertical-align:top"'
     th = 'style="border:1px solid #ccc;padding:4px 6px;background:#f2f2f2;text-align:left"'
 
-    def img_html(ref: str) -> str:
+    shown: set[tuple[str, Path]] = set()   # (sitecode 절, 캡처) — 같은 표 안에서 같은 캡처를 두 번 그리지 않는다
+
+    def img_html(ref: str, scope: str = "") -> str:
         if not ref:
             return ""
         path = m._capture_path(ref)
         label = esc(m._capture_label(path))
         if not path.is_file():
             return f'<span style="color:#888">캡처 파일 없음: {label}</span>'
+        if (scope, path) in shown:
+            return f'<span style="color:#888">↑ 위 행과 같은 캡처 ({label})</span>'
+        shown.add((scope, path))
         if path not in cid_of:
             cid_of[path] = f"pcm{len(images)}"
             images.append((cid_of[path], path))
         return (f'<img src="cid:{cid_of[path]}" width="{COMPARE_IMAGE_WIDTH}"><br>'
                 f'<span style="color:#888;font-size:8.5pt">{label}</span>')
 
-    def side_cell(descs: list[str], ref: str, empty: str) -> str:
+    def side_cell(descs: list[str], ref: str, empty: str, scope: str = "") -> str:
         body = _ITEM_SEP.join(descs) if descs else f'<span style="color:#888">{esc(empty)}</span>'
-        img = img_html(ref)
+        img = img_html(ref, scope)
         return f"<td {td}>{body}" + (f'<div style="margin-top:6px">{img}</div>' if img else "") + "</td>"
 
+    # 종류(KINDS 순서 = 신규 → 디자인변경) 별로 큰 절을 나누고, 그 안에서 sitecode 별 표
+    for kind in KINDS:
+        sites = {sc: [r for r in rows if r["kind"] == kind] for sc, rows in by_site.items()}
+        sites = {sc: rows for sc, rows in sites.items() if rows}
+        if not sites:
+            continue
+        color = _KIND_COLORS.get(kind, "#666")
+        parts.append(f'<h1 style="margin:24px 0 4px;font-size:15pt;color:{color}">'
+                     f'{esc(m.KIND_LABELS.get(kind, kind))} {counts[kind]}건 '
+                     f'<span style="font-size:10.5pt;color:#888">({len(sites)}개 site)</span></h1>')
+        _site_tables(parts, sites, color, m, esc, td, th, img_html, side_cell)
+    parts.append(f'<p style="margin-top:18px;color:#888">캡처 폴더: {esc(m._share_path(m.CAPTURE_DIR))}</p></div>')
+    return "".join(parts), images, counts
+
+
+def _site_tables(parts, by_site, color, m, esc, td, th, img_html, side_cell) -> None:
     for sc in sorted(by_site):
         # (페이지, 후 캡처, 전 캡처) 가 같은 요소는 한 행으로 묶는다
         groups: dict[tuple[str, str, str], list[dict]] = defaultdict(list)
-        for r in sorted(by_site[sc], key=lambda r: (r["page"], KINDS.index(r["kind"]), r["link"])):
+        for r in sorted(by_site[sc], key=lambda r: (r["page"], r["link"])):
             prev = r["before"] or {}
             groups[(r["page"], r["capture"], prev.get("capture", ""))].append(r)
-        parts.append(f'<h2 style="margin:18px 0 6px;border-bottom:2px solid #c00">{esc(sc)}</h2>'
+        parts.append(f'<h2 style="margin:16px 0 6px;font-size:12.5pt;border-bottom:2px solid {color}">{esc(sc)}</h2>'
                      '<table style="border-collapse:collapse;font-size:9.5pt;margin:4px 0 8px">'
                      f"<tr><th {th}>페이지</th><th {th}>구분 · 링크</th><th {th}>전</th><th {th}>후</th></tr>")
         keys = list(groups)
@@ -207,16 +242,14 @@ def build_html(m, by_site: dict[str, list[dict]], days: list[str]) -> tuple[str,
             kind_new = all(r["kind"] == "new" for r in rows)
             parts.append(f"<tr><td {td}>{esc(page)}</td>"
                          f"<td {td}>{_ITEM_SEP.join(links)}</td>"
-                         + side_cell(befores, before_ref, "— (신규)" if kind_new else "전 기록 없음")
-                         + side_cell(afters, after_ref, "") + "</tr>")
+                         + side_cell(befores, before_ref, "— (신규)" if kind_new else "전 기록 없음", f"{color}|{sc}")
+                         + side_cell(afters, after_ref, "", f"{color}|{sc}") + "</tr>")
         parts.append("</table>")
         if len(keys) > m.MAIL_MAX_IMAGES_PER_SITE:
             rest = keys[m.MAIL_MAX_IMAGES_PER_SITE:]
             parts.append(f'<p style="color:#666">비교 {len(rest)}건 더 있음 (후 캡처):<br>'
                          + "<br>".join(esc(m._capture_label(m._capture_path(a))) if a else esc(p)
                                        for p, a, _ in rest) + "</p>")
-    parts.append(f'<p style="margin-top:18px;color:#888">캡처 폴더: {esc(m._share_path(m.CAPTURE_DIR))}</p></div>')
-    return "".join(parts), images, counts
 
 
 def send(m, subject: str, body: str, images: list[tuple[str, Path]]) -> str:
@@ -243,7 +276,7 @@ def main() -> int:
     ap.add_argument("--day", help="이 날짜(YYYY-MM-DD) 하루만 본다 (기본: 오늘부터 SINCE_DAYS 일)")
     ap.add_argument("--resend", action="store_true", help="보낸 기록과 상관없이 다시 보낸다")
     ap.add_argument("--test", action="store_true",
-                    help="본인에게만 [TEST] 제목으로 보내고 보낸 기록 · 폴더 이동은 하지 않는다 (--resend 포함)")
+                    help="본인에게만 [TEST] 제목으로 보내고 보낸 기록은 남기지 않는다 (--resend 포함)")
     args = ap.parse_args()
     if args.test:
         global CHANGE_MAIL_TO
@@ -279,19 +312,20 @@ def main() -> int:
         return 0
 
     if args.test:
-        subject = "[TEST]" + subject
+        # [TEST] 는 checker 접두 뒤에 붙인다 — 제목이 접두로 시작해야 폴더 이동 대상이 된다
+        subject = subject.replace(m.MAIL_SUBJECT_PREFIX, m.MAIL_SUBJECT_PREFIX + "[TEST]", 1)
     to = send(m, subject, body, images)
     print(f"📧 발송 → {to}")
-    if args.test:
-        return 0
-    now = datetime.now().strftime("%Y-%m-%d %H:%M")
-    for rows in by_site.values():
-        for r in rows:
-            sent[r["id"]] = now
-    sent_path.write_text(json.dumps(sent, ensure_ascii=False, indent=1), encoding="utf-8")
-    moved = m.move_alert_mails(m.MAIL_MOVE_WAIT_SEC)
-    if moved:
-        print(f"📁 {moved}통을 '{m.MAIL_MOVE_TO_FOLDER}' 로 옮김")
+    if not args.test:
+        now = datetime.now().strftime("%Y-%m-%d %H:%M")
+        for rows in by_site.values():
+            for r in rows:
+                sent[r["id"]] = now
+        sent_path.write_text(json.dumps(sent, ensure_ascii=False, indent=1), encoding="utf-8")
+    # 이미지가 많아 받은편함 도착이 늦으므로 checker 보다 길게 기다린다
+    moved = m.move_alert_mails(max(MOVE_WAIT_SEC, m.MAIL_MOVE_WAIT_SEC))
+    print(f"📁 {moved}통을 '{m.MAIL_MOVE_TO_FOLDER}' 로 옮김" if moved
+          else f"📁 받은편함에 아직 안 들어와 못 옮김 — 다음 checker / 이 스크립트 실행 때 같이 옮겨진다")
     return 0
 
 

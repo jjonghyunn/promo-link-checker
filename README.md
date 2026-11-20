@@ -278,13 +278,14 @@ Get-ScheduledTask -TaskName "promo_link_checker_<캠페인>" | Get-ScheduledTask
   `MAIL_SUBJECT_PREFIX` · `MAIL_MOVE_TO_FOLDER` 등을 그대로 쓴다 → 캠페인 사본마다 이 파일만 복사하면 된다.
 - **대상**: `_capture_state.json` 에서 `SINCE_DAYS`(기본 1 = 오늘) 안에 처음 기록된 `KINDS`(기본 신규 · 디자인변경) 요소.
 - **중복 방지**: 보낸 요소는 `output/_change_mail_sent.json` 에 남겨 하루에 몇 번 돌려도 같은 요소는 다시 안 간다.
-- **본문**: sitecode 별 비교표 `페이지 | 요소 | 전 | 후` — **전 / 후 캡처 이미지를 한 행에 나란히** 놓는다
+- **본문**: 종류별 절(신규 → 디자인변경, `KINDS` 순서) 안에 sitecode 별 비교표 `페이지 | 구분 · 링크 | 전 | 후` — **전 / 후 캡처 이미지를 한 행에 나란히** 놓는다
   (이미지 가로 `COMPARE_IMAGE_WIDTH`, sitecode 당 최대 `MAIL_MAX_IMAGES_PER_SITE` 행, 넘치면 파일명 목록).
+  - 맨 위에 종류별 site 요약(`신규 4개 site: jp(5), sa(6) …`). 같은 표에서 이미 나온 캡처는 다시 싣지 않고 `↑ 위 행과 같은 캡처` 로 적는다.
   - 같은 캡처 쌍을 공유하는 요소는 한 행으로 묶는다. 전 / 후 칸 위에 요소 설명(날짜 · 카드 종류 · 크기 · 이미지 파일명 / 텍스트)을 적는다.
   - 디자인변경: 같은 링크의 **앞선 날짜** 기록과 비교한다. 같은 날 같은 링크로 함께 잡힌 다른 요소(이미지 카드 · 텍스트 카드 등)는
     checker 가 디자인변경으로 적어도 신규로 본다. 신규: 전은 `— (신규)`.
 - **제목**: `<MAIL_SUBJECT_PREFIX>[변경] MM-DD 신규 N · 디자인변경 N (N개 site: …)`. checker 접두를 그대로 쓰므로
-  checker 가 돌 때 받은 메일을 `MAIL_MOVE_TO_FOLDER` 로 같이 옮긴다.
+  보낸 직후 받은 메일을 `MAIL_MOVE_TO_FOLDER` 로 옮긴다 (늦게 오면 다음 checker 실행 때 같이 옮겨진다).
 
 | 상수 | 의미 |
 |---|---|
@@ -292,12 +293,13 @@ Get-ScheduledTask -TaskName "promo_link_checker_<캠페인>" | Get-ScheduledTask
 | `KINDS` | 알릴 종류 — `new` 신규 / `changed` 디자인변경 / `recapture` 재캡처 |
 | `SINCE_DAYS` | 오늘 포함 며칠 안의 기록을 볼지 |
 | `CARD_KINDS` | class 문자열 → 카드 종류 이름 (요소 설명에 쓴다) |
+| `MOVE_WAIT_SEC` | 보낸 메일이 받은편함에 올 때까지 기다렸다가 checker 의 `MAIL_MOVE_TO_FOLDER` 로 옮기는 최대 시간(초) |
 | `ATTACH_ORIGINALS` | 원본 캡처를 첨부로도 붙일지 (`False` 면 메일 용량이 절반 정도) |
 
 ```powershell
 python promo_change_mail.py              # 보낼 게 있으면 보낸다
 python promo_change_mail.py --dry-run    # 대상 · 본문만 확인 (output/_change_mail_preview.html)
-python promo_change_mail.py --test       # 본인에게만 [TEST] 로 (보낸 기록 · 폴더 이동 없음)
+python promo_change_mail.py --test       # 본인에게만 [TEST] 로 (보낸 기록 안 남김)
 python promo_change_mail.py --day 2026-11-20 --resend   # 그날 요소를 다시 보냄
 ```
 
