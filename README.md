@@ -280,8 +280,9 @@ Get-ScheduledTask -TaskName "promo_link_checker_<캠페인>" | Get-ScheduledTask
 - **중복 방지**: 보낸 요소는 `output/_change_mail_sent.json` 에 남겨 하루에 몇 번 돌려도 같은 요소는 다시 안 간다.
 - **본문**: sitecode 별 비교표 `페이지 | 요소 | 전 | 후` — **전 / 후 캡처 이미지를 한 행에 나란히** 놓는다
   (이미지 가로 `COMPARE_IMAGE_WIDTH`, sitecode 당 최대 `MAIL_MAX_IMAGES_PER_SITE` 행, 넘치면 파일명 목록).
-  - 같은 캡처 쌍을 공유하는 요소는 한 행으로 묶고, 요소 칸에 구분(신규 / 디자인변경) · 링크 · 텍스트를 적는다.
-  - 디자인변경: 전 = 같은 링크의 직전 기록 캡처. 신규: 전은 `— (신규)`.
+  - 같은 캡처 쌍을 공유하는 요소는 한 행으로 묶는다. 전 / 후 칸 위에 요소 설명(날짜 · 카드 종류 · 크기 · 이미지 파일명 / 텍스트)을 적는다.
+  - 디자인변경: 같은 링크의 **앞선 날짜** 기록과 비교한다. 같은 날 같은 링크로 함께 잡힌 다른 요소(이미지 카드 · 텍스트 카드 등)는
+    checker 가 디자인변경으로 적어도 신규로 본다. 신규: 전은 `— (신규)`.
 - **제목**: `<MAIL_SUBJECT_PREFIX>[변경] MM-DD 신규 N · 디자인변경 N (N개 site: …)`. checker 접두를 그대로 쓰므로
   checker 가 돌 때 받은 메일을 `MAIL_MOVE_TO_FOLDER` 로 같이 옮긴다.
 
@@ -290,6 +291,7 @@ Get-ScheduledTask -TaskName "promo_link_checker_<캠페인>" | Get-ScheduledTask
 | `CHANGE_MAIL_TO` | 받는 사람 (세미콜론 구분). 비우면 자기 자신. checker 의 `MAIL_TO` 와 따로 둔다 |
 | `KINDS` | 알릴 종류 — `new` 신규 / `changed` 디자인변경 / `recapture` 재캡처 |
 | `SINCE_DAYS` | 오늘 포함 며칠 안의 기록을 볼지 |
+| `CARD_KINDS` | class 문자열 → 카드 종류 이름 (요소 설명에 쓴다) |
 | `ATTACH_ORIGINALS` | 원본 캡처를 첨부로도 붙일지 (`False` 면 메일 용량이 절반 정도) |
 
 ```powershell

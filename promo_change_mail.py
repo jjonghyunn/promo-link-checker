@@ -1,7 +1,7 @@
 # promo_change_mail.py
 # 2026-11-20  Jonghyun Park w/ Claude
+# updated: 2026-11-20 — v1.2: 디자인변경은 앞선 날짜 기록이 있을 때만 (같은 날 같은 링크의 다른 요소는 신규), 전 / 후 칸에 요소 설명 추가
 # updated: 2026-11-20 — v1.1: 비교표를 전 / 후 캡처 이미지를 한 행에 나란히 놓는 형식으로 변경 (속성값 비교 제거)
-# updated: 2026-11-20 — v1.0: 신규 · 디자인변경 클릭 요소 알림 메일 (promo_link_checker 와 같은 폴더에 두고 실행)
 # (이전 버전 이력은 git history / GitHub Releases 참조 — 헤더에는 최근 2개 항목만 남긴다)
 r"""
 promo_change_mail — promo_link_checker 가 새로 캡처한 클릭 요소(신규 · 디자인변경)를 모아 메일로 알린다.
@@ -22,9 +22,11 @@ sitecode 에서 새 배너가 붙거나 디자인이 바뀐 것은 캡처 · 리
   python promo_change_mail.py --day 2026-11-20 --resend   그날 요소를 보낸 기록과 상관없이 다시 보낸다
   python promo_change_mail.py --test       본인에게만 [TEST] 로 보낸다 (보낸 기록 · 폴더 이동 없음)
 
-메일 본문 = sitecode 별 비교표 (페이지 · 요소 · 전 캡처 · 후 캡처) — 전 / 후 이미지를 한 행에 나란히.
-  - 같은 캡처 쌍을 공유하는 요소는 한 행으로 묶는다 (요소 칸에 구분 · 링크 · 텍스트).
-  - 디자인변경: 전 = 같은 링크의 직전 기록 캡처. 신규: 전은 "— (신규)".
+메일 본문 = sitecode 별 비교표 (페이지 · 구분 · 링크 · 전 · 후) — 전 / 후 칸에 요소 설명(날짜 · 카드 종류 · 크기 ·
+  이미지 파일명 / 텍스트)과 캡처 이미지를 나란히. 같은 캡처 쌍을 공유하는 요소는 한 행으로 묶는다.
+  - 디자인변경: 같은 링크의 **앞선 날짜** 기록이 있을 때만. 같은 날 같은 링크로 함께 잡힌 다른 요소(이미지 카드 ·
+    텍스트 카드 등)는 checker 가 디자인변경으로 적어도 신규로 본다.
+  - 신규: 전은 "— (신규)".
 
   promo_link_checker 실행 직후에 돌리면 된다 (작업 스케줄러에서 checker 다음 동작으로 추가하거나 별도 작업).
 """
@@ -63,6 +65,8 @@ ATTACH_ORIGINALS: bool = True
 TEXT_MAX_CHARS: int = 60
 # 비교표에 전 / 후 캡처를 나란히 놓을 때 이미지 한 장의 가로(px)
 COMPARE_IMAGE_WIDTH: int = 360
+# 요소 class 에 들어 있는 문자열 → 표에 적을 카드 종류 (앞에서부터 먼저 맞는 것)
+CARD_KINDS: dict[str, str] = {"image-link": "이미지 카드", "text-link": "텍스트 카드"}
 
 # ─── 파일 ─────────────────────────────────────────────────────────
 # 같은 폴더에서 찾을 checker 파일 (여러 개면 버전이 가장 높은 것)
@@ -101,8 +105,9 @@ def load_json(path: Path) -> dict:
 
 
 def _previous(fps: dict, fp: str, first_seen: str) -> dict | None:
-    """같은 요소의 직전 디자인 기록 (이번 지문을 뺀 것 중 first_seen 이 이번 이하에서 가장 늦은 것)."""
-    older = [v for f, v in fps.items() if f != fp and v.get("first_seen", "") <= first_seen]
+    """같은 링크의 직전 디자인 기록 — 이번보다 **앞선 날짜**에 처음 기록된 것 중 가장 늦은 것.
+    같은 날 기록은 같은 실행에서 함께 발견된 다른 요소(같은 링크의 이미지 카드 · 텍스트 카드 등)라 전으로 보지 않는다."""
+    older = [v for f, v in fps.items() if f != fp and v.get("first_seen", "") < first_seen]
     return max(older, key=lambda v: v.get("first_seen", "")) if older else None
 
 
@@ -119,10 +124,28 @@ def collect(state: dict, days: set[str], sent: dict, resend: bool) -> dict[str, 
                 if eid in sent and not resend:
                     continue
                 prev = _previous(fps, fp, v["first_seen"]) if v["kind"] != "new" else None
-                by_site[sc].append({"id": eid, "page": page, "link": el_key, "kind": v["kind"],
+                # 앞선 날짜 기록이 없는 디자인변경 = 같은 실행의 같은 링크 다른 요소 → 신규로 본다
+                kind = "new" if v["kind"] == "changed" and not prev else v["kind"]
+                if kind not in KINDS:
+                    continue
+                by_site[sc].append({"id": eid, "page": page, "link": el_key, "kind": kind,
                                     "design": v.get("design") or {}, "capture": v.get("capture", ""),
                                     "first_seen": v["first_seen"], "before": prev})
     return by_site
+
+
+def _desc(design: dict, first_seen: str, esc) -> str:
+    """요소 한 줄 설명 — 날짜 · 카드 종류 · 크기 + 이미지 파일명 또는 텍스트."""
+    classes = " ".join(design.get("classes") or [])
+    kind = next((name for key, name in CARD_KINDS.items() if key in classes), classes or "요소")
+    size = design.get("size") or []
+    size_s = f" {size[0]}×{size[1]}" if len(size) == 2 else ""
+    if size_s and not any(size):
+        size_s = " (숨김 0×0)"
+    imgs = [Path(str(u).split("?", 1)[0]).name for u in design.get("images") or []]
+    text = (design.get("text") or "")[:TEXT_MAX_CHARS]
+    detail = (f'<br>이미지: {esc(", ".join(imgs))}' if imgs else "") + (f'<br>텍스트: "{esc(text)}"' if text else "")
+    return f'<b>{esc(first_seen)}</b> · {esc(kind)}{esc(size_s)}<span style="color:#555">{detail}</span>'
 
 
 def build_html(m, by_site: dict[str, list[dict]], days: list[str]) -> tuple[str, list[tuple[str, Path]], dict]:
@@ -142,18 +165,23 @@ def build_html(m, by_site: dict[str, list[dict]], days: list[str]) -> tuple[str,
     td = 'style="border:1px solid #ccc;padding:4px 6px;vertical-align:top"'
     th = 'style="border:1px solid #ccc;padding:4px 6px;background:#f2f2f2;text-align:left"'
 
-    def img_cell(ref: str, empty: str) -> str:
+    def img_html(ref: str) -> str:
         if not ref:
-            return f'<td {td}><span style="color:#888">{esc(empty)}</span></td>'
+            return ""
         path = m._capture_path(ref)
         label = esc(m._capture_label(path))
         if not path.is_file():
-            return f'<td {td}><span style="color:#888">캡처 파일 없음<br>{label}</span></td>'
+            return f'<span style="color:#888">캡처 파일 없음: {label}</span>'
         if path not in cid_of:
             cid_of[path] = f"pcm{len(images)}"
             images.append((cid_of[path], path))
-        return (f'<td {td}><img src="cid:{cid_of[path]}" width="{COMPARE_IMAGE_WIDTH}"><br>'
-                f'<span style="color:#888;font-size:8.5pt">{label}</span></td>')
+        return (f'<img src="cid:{cid_of[path]}" width="{COMPARE_IMAGE_WIDTH}"><br>'
+                f'<span style="color:#888;font-size:8.5pt">{label}</span>')
+
+    def side_cell(descs: list[str], ref: str, empty: str) -> str:
+        body = _ITEM_SEP.join(descs) if descs else f'<span style="color:#888">{esc(empty)}</span>'
+        img = img_html(ref)
+        return f"<td {td}>{body}" + (f'<div style="margin-top:6px">{img}</div>' if img else "") + "</td>"
 
     for sc in sorted(by_site):
         # (페이지, 후 캡처, 전 캡처) 가 같은 요소는 한 행으로 묶는다
@@ -163,23 +191,24 @@ def build_html(m, by_site: dict[str, list[dict]], days: list[str]) -> tuple[str,
             groups[(r["page"], r["capture"], prev.get("capture", ""))].append(r)
         parts.append(f'<h2 style="margin:18px 0 6px;border-bottom:2px solid #c00">{esc(sc)}</h2>'
                      '<table style="border-collapse:collapse;font-size:9.5pt;margin:4px 0 8px">'
-                     f"<tr><th {th}>페이지</th><th {th}>요소</th><th {th}>전</th><th {th}>후</th></tr>")
+                     f"<tr><th {th}>페이지</th><th {th}>구분 · 링크</th><th {th}>전</th><th {th}>후</th></tr>")
         keys = list(groups)
         for page, after_ref, before_ref in keys[:m.MAIL_MAX_IMAGES_PER_SITE]:
-            items = []
-            for r in groups[(page, after_ref, before_ref)]:
+            rows = groups[(page, after_ref, before_ref)]
+            links, befores, afters = [], [], []
+            for r in rows:
                 label = m.KIND_LABELS.get(r["kind"], r["kind"])
                 link = r["link"] if r["link"].startswith("http") else "https://" + r["link"]
-                text = (r["design"].get("text") or "")[:TEXT_MAX_CHARS]
-                when = f' <span style="color:#888">(전 {esc(r["before"].get("first_seen", ""))})</span>' if r["before"] else ""
-                items.append(f'<span style="color:{_KIND_COLORS.get(r["kind"], "#666")}">{esc(label)}</span>{when}<br>'
-                             f'<a href="{esc(link, quote=True)}">{esc(r["link"])}</a>'
-                             + (f'<br><span style="color:#555">{esc(text)}</span>' if text else ""))
-            kind_new = all(r["kind"] == "new" for r in groups[(page, after_ref, before_ref)])
+                links.append(f'<span style="color:{_KIND_COLORS.get(r["kind"], "#666")}">{esc(label)}</span><br>'
+                             f'<a href="{esc(link, quote=True)}">{esc(r["link"])}</a>')
+                afters.append(_desc(r["design"], r["first_seen"], esc))
+                if r["before"]:
+                    befores.append(_desc(r["before"].get("design") or {}, r["before"].get("first_seen", ""), esc))
+            kind_new = all(r["kind"] == "new" for r in rows)
             parts.append(f"<tr><td {td}>{esc(page)}</td>"
-                         f"<td {td}>{_ITEM_SEP.join(items)}</td>"
-                         + img_cell(before_ref, "— (신규)" if kind_new else "전 캡처 없음")
-                         + img_cell(after_ref, "캡처 없음") + "</tr>")
+                         f"<td {td}>{_ITEM_SEP.join(links)}</td>"
+                         + side_cell(befores, before_ref, "— (신규)" if kind_new else "전 기록 없음")
+                         + side_cell(afters, after_ref, "") + "</tr>")
         parts.append("</table>")
         if len(keys) > m.MAIL_MAX_IMAGES_PER_SITE:
             rest = keys[m.MAIL_MAX_IMAGES_PER_SITE:]
