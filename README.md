@@ -269,3 +269,33 @@ Get-ScheduledTask -TaskName "promo_link_checker_<캠페인>" | Get-ScheduledTask
   그래서 화면 높이를 미리 늘려 두고 `CAPTURE_SETTLE_MS`(기본 1.5초) 기다렸다가 찍는다.
 - GNB 메가메뉴처럼 화면에 안 보이는 링크가 hit 이면 메뉴를 펼친 `_menu.jpg` 에 표시된다 (전체 캡처에는 테두리가 없다).
   마우스를 올려서 열리는 메뉴만 펼칠 수 있다 — 클릭해야 열리는 메뉴·캐러셀 슬라이드는 범례와 리포트 `[숨김]` 태그로만 알 수 있다.
+
+## 신규 · 디자인변경 요소 알림 메일 (`promo_change_mail.py`)
+본체 메일은 sitecode 가 **처음** hit 될 때만 간다. 이미 hit 기록이 있는 sitecode 에서 새 클릭 요소가 생기거나
+디자인이 바뀐 것은 캡처 · 리포트에만 남으므로, 그걸 모아 알리는 별도 도구다. **checker 와 같은 폴더에 두고 실행**한다.
+
+- **설정 재사용**: 같은 폴더의 `promo_link_checker_v*.py`(가장 높은 버전)를 불러와 `OUTPUT_DIR` · `CAPTURE_DIR` ·
+  `MAIL_SUBJECT_PREFIX` · `MAIL_MOVE_TO_FOLDER` 등을 그대로 쓴다 → 캠페인 사본마다 이 파일만 복사하면 된다.
+- **대상**: `_capture_state.json` 에서 `SINCE_DAYS`(기본 1 = 오늘) 안에 처음 기록된 `KINDS`(기본 신규 · 디자인변경) 요소.
+- **중복 방지**: 보낸 요소는 `output/_change_mail_sent.json` 에 남겨 하루에 몇 번 돌려도 같은 요소는 다시 안 간다.
+- **본문**: sitecode 별 비교표 `페이지 | 구분 | 링크 | 항목 | 전 | 후` + 후 / 전 캡처 이미지(sitecode 당 각 최대 `MAIL_MAX_IMAGES_PER_SITE` 장).
+  - 디자인변경: 같은 링크의 직전 기록과 비교해 **달라진 항목만**(이미지 파일명 · 텍스트 · 크기 · class) 적고 후 칸을 노란색으로 칠한다.
+  - 신규: 전은 `—`, 후에 그 요소의 값.
+- **제목**: `<MAIL_SUBJECT_PREFIX>[변경] MM-DD 신규 N · 디자인변경 N (N개 site: …)`. checker 접두를 그대로 쓰므로
+  checker 가 돌 때 받은 메일을 `MAIL_MOVE_TO_FOLDER` 로 같이 옮긴다.
+
+| 상수 | 의미 |
+|---|---|
+| `CHANGE_MAIL_TO` | 받는 사람 (세미콜론 구분). 비우면 자기 자신. checker 의 `MAIL_TO` 와 따로 둔다 |
+| `KINDS` | 알릴 종류 — `new` 신규 / `changed` 디자인변경 / `recapture` 재캡처 |
+| `SINCE_DAYS` | 오늘 포함 며칠 안의 기록을 볼지 |
+| `ATTACH_ORIGINALS` | 원본 캡처를 첨부로도 붙일지 (`False` 면 메일 용량이 절반 정도) |
+
+```powershell
+python promo_change_mail.py              # 보낼 게 있으면 보낸다
+python promo_change_mail.py --dry-run    # 대상 · 본문만 확인 (output/_change_mail_preview.html)
+python promo_change_mail.py --test       # 본인에게만 [TEST] 로 (보낸 기록 · 폴더 이동 없음)
+python promo_change_mail.py --day 2026-11-20 --resend   # 그날 요소를 다시 보냄
+```
+
+checker 실행이 끝난 뒤 돌려야 그 실행의 새 캡처가 들어간다 (작업 스케줄러에서 checker 작업 다음 시각에 별도 작업으로 등록).
