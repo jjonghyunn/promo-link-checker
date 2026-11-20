@@ -1,5 +1,5 @@
 # promo_link_checker  
-<sub>2026-11-19  Jonghyun Park w/ Claude</sub>  
+<sub>2026-11-20  Jonghyun Park w/ Claude</sub>  
 국가별 **home · 프로모션(offer) 페이지의 클릭 가능한 요소** 중에 타겟 캠페인 링크가 걸려 있는지 매일 확인하고,
 결과를 `_daily_report.xlsx` 에 하루 1블록씩 누적하는 도구. 캡처는 **처음 보는 hit 요소, 또는 디자인이
 바뀐 요소가 있을 때만 1회** 찍는다(매일 누적 캡처하지 않음).
@@ -91,6 +91,8 @@ offer
 - **"첫 hit" 판정** = 실행 시작 시점의 캡처 기록(`_capture_state.json`)에 그 sitecode 가 **아예 없는데** 이번 실행에서 hit.
   home · offer 중 어느 쪽이든 한 번이라도 기록된 sitecode 는 다시 알리지 않는다. 한 실행에서 여러 sitecode 가 걸리면 메일 1통에 묶는다.
 - 메일 내용 = sitecode 별 페이지 URL · 매칭 키워드 · 매칭 링크 목록 · 캡처 이미지(**본문에 바로 보이고**, 원본도 첨부로 붙는다).
+- 본문에는 보내는 PC 의 절대경로를 적지 않는다. 캡처 파일은 `CAPTURE_DIR` 기준 상대경로(`sitecode\파일명`)로, 캡처 폴더는 맨 아래에 한 번만 적는다
+  (사용자 홈 아래면 홈을 뗀 경로). 받는 사람마다 로컬 경로 앞부분이 달라서다.
 - 로컬 Outlook 앱으로 보낸다(별도 인증 없음). 보낸 직후 받은편함에 도착하면 `MAIL_MOVE_TO_FOLDER` 로 옮기고,
   제때 안 오면 다음 실행 때 옮긴다.
 - **캡처에 성공한 hit 만 알린다.** 캡처를 끄면(`CAPTURE_ON_HIT=False` · `--no-capture`) 기록이 안 남아 알림도 가지 않는다.

@@ -1,14 +1,12 @@
 # promo_link_checker_v1.4.py
-# 2026-11-19  Jonghyun Park w/ Claude
+# 2026-11-20  Jonghyun Park w/ Claude
+# updated: 2026-11-20 — 첫 hit 메일 본문에서 보내는 PC 의 절대경로를 뺐다 (받는 사람마다 로컬 경로 앞부분이 다르다):
+#                       리포트 경로 줄 제거, 캡처 파일은 CAPTURE_DIR 기준 상대경로로 적고,
+#                       캡처 폴더는 맨 아래에 한 번만 적는다 (사용자 홈 아래면 홈을 뗀 경로)
 # updated: 2026-11-19 — v1.4: 한 번도 hit 된 적 없던 sitecode 가 처음 hit 되면 메일로 알린다 (MAIL_ON_FIRST_HIT) —
 #                       페이지 URL · 매칭 링크 · 캡처 이미지(본문 인라인 + 원본 첨부)를 로컬 Outlook 으로 자기 자신에게 보내고,
 #                       받은 알림 메일은 MAIL_MOVE_TO_FOLDER(받은편함 하위 폴더)로 옮긴다. --no-mail 로 그 실행만 끌 수 있다.
 #                       "첫 hit" = 실행 시작 시점의 캡처 기록(_capture_state.json)에 그 sitecode 가 아예 없던 경우.
-# updated: 2026-10-26 — 화면에서 안 바뀐 요소가 "디자인변경"으로 재캡처되던 문제 2건 수정 —
-#                       (1) 크기만 반올림 경계(예: 90px)에서 흔들려 지문이 달라지던 것: class·이미지·텍스트가 같고
-#                           크기 차이가 FINGERPRINT_SIZE_TOLERANCE(20px) 이하이거나 한쪽이 0×0(숨김 상태)이면 같은 디자인으로 본다
-#                       (2) Insider 개인화 팝업 링크(0×0, 화면에 안 보임)를 EXCLUDE_HIT_SELECTOR 로 hit 에서 제외
-#                       캡처를 JPG(품질 82)로 저장 (CAPTURE_IMAGE_EXT · CAPTURE_JPEG_QUALITY) — 다른 캡처 도구와 형식 통일, 용량 절감
 # (이전 버전 이력은 git history / GitHub Releases 참조 — 헤더에는 최근 2개 항목만 남긴다)
 r"""
 promo_link_checker — 국가별 홈 · 프로모션(offer) 페이지의 클릭 가능한 요소 중에
@@ -1384,6 +1382,22 @@ def _capture_path(ref: str) -> Path:
     return path if path.is_absolute() else OUTPUT_DIR / path
 
 
+def _share_path(path: Path) -> str:
+    """메일에 적을 경로. 사용자 홈 아래면 홈을 뗀다 (받는 사람마다 로컬 경로 앞부분이 다르다)."""
+    try:
+        return str(Path(path).relative_to(Path.home()))
+    except ValueError:
+        return str(path)
+
+
+def _capture_label(path: Path) -> str:
+    """메일에 적을 캡처 파일 표기. CAPTURE_DIR 기준 상대경로, 그 밖이면 파일명만."""
+    try:
+        return str(Path(path).relative_to(CAPTURE_DIR))
+    except ValueError:
+        return Path(path).name
+
+
 def _first_hit_html(first_hits: dict[str, list[dict]]) -> tuple[str, list[tuple[str, Path]]]:
     """메일 본문 HTML 과 인라인으로 넣을 이미지 [(content-id, 경로)] 를 만든다. first_hits = {sitecode: [결과 행, ...]}"""
     esc = html.escape
@@ -1414,16 +1428,16 @@ def _first_hit_html(first_hits: dict[str, list[dict]]) -> tuple[str, list[tuple[
         for ref in shots[:MAIL_MAX_IMAGES_PER_SITE]:
             path = _capture_path(ref)
             if not path.is_file():
-                parts.append(f'<p style="color:#888">캡처 파일 없음: {esc(str(path))}</p>')
+                parts.append(f'<p style="color:#888">캡처 파일 없음: {esc(_capture_label(path))}</p>')
                 continue
             cid = f"plc{len(images)}"
             images.append((cid, path))
-            parts.append(f'<p style="margin:10px 0 2px;color:#666">{esc(str(path))}</p>'
+            parts.append(f'<p style="margin:10px 0 2px;color:#666">{esc(_capture_label(path))}</p>'
                          f'<p style="margin:0"><img src="cid:{cid}" width="{MAIL_INLINE_IMAGE_WIDTH}"></p>')
         if len(shots) > MAIL_MAX_IMAGES_PER_SITE:
             parts.append('<p style="color:#666">캡처 ' + str(len(shots) - MAIL_MAX_IMAGES_PER_SITE) + '장 더 있음:<br>'
-                         + "<br>".join(esc(str(_capture_path(r))) for r in shots[MAIL_MAX_IMAGES_PER_SITE:]) + "</p>")
-    parts.append(f'<p style="margin-top:18px;color:#888">리포트: {esc(str(OUTPUT_DIR / DAILY_REPORT_NAME))}</p></div>')
+                         + "<br>".join(esc(_capture_label(_capture_path(r))) for r in shots[MAIL_MAX_IMAGES_PER_SITE:]) + "</p>")
+    parts.append(f'<p style="margin-top:18px;color:#888">캡처 폴더: {esc(_share_path(CAPTURE_DIR))}</p></div>')
     return "".join(parts), images
 
 
