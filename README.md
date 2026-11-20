@@ -292,6 +292,7 @@ Get-ScheduledTask -TaskName "promo_link_checker_<캠페인>" | Get-ScheduledTask
 | `CHANGE_MAIL_TO` | 받는 사람 (세미콜론 구분). 비우면 자기 자신. checker 의 `MAIL_TO` 와 따로 둔다 |
 | `KINDS` | 알릴 종류 — `new` 신규 / `changed` 디자인변경 / `recapture` 재캡처 |
 | `SKIP_FIRST_HIT_SITES` | 기간 안에 처음 hit 된 sitecode 는 뺀다 — checker 의 첫 hit 메일과 겹치지 않게 |
+| `SCHEDULE_XLSX` · `SCHEDULE_SHEET` · `SCHEDULE_HEADER_ROW` · `SCHEDULE_SITE_HEADER` · `SCHEDULE_PERIOD_COLS` | 캠페인 일정 엑셀 — 오늘이 기간(시작·끝 열 쌍) 안인데 checker 오늘 결과(일일 리포트)에 hit 가 없는 site 를 맨 위 요약에 "기간 진행중 · 감지 안 됨" 으로 적는다 (점검 목록 밖 · 오늘 결과 없음 · 접속 실패는 괄호). 비우면 안 적는다. 변경 메일이 나갈 때만 같이 나간다 |
 | `SINCE_DAYS` | 오늘 포함 며칠 안의 기록을 볼지 |
 | `CARD_KINDS` | class 문자열 → 카드 종류 이름 (요소 설명에 쓴다) |
 | `MOVE_WAIT_SEC` | 보낸 메일이 받은편함에 올 때까지 기다렸다가 checker 의 `MAIL_MOVE_TO_FOLDER` 로 옮기는 최대 시간(초) |

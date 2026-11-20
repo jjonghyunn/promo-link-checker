@@ -1,10 +1,9 @@
 # promo_change_mail.py
 # 2026-11-20  Jonghyun Park w/ Claude
+# updated: 2026-11-20 — v1.5: 맨 위 요약에 "기간 진행중 · 감지 안 됨" site 줄 추가 (SCHEDULE_XLSX 일정 엑셀 기준,
+#   checker 오늘 결과에 hit 가 없는 site. 점검 목록 밖 · 접속 실패는 괄호로 표시)
 # updated: 2026-11-20 — v1.4: 기간 안에 처음 hit 된 site 는 제외(SKIP_FIRST_HIT_SITES — 첫 hit 메일과 중복 방지),
 #   pythonw 실행 시 output/_change_mail_latest.log 에 기록 (checker 작업의 두 번째 동작으로 등록)
-# updated: 2026-11-20 — v1.3: 본문을 종류별 절로 나눔 (신규 절이 위, 디자인변경 절이 아래 — KINDS 순서),
-#   맨 위에 종류별 site 요약, 같은 표에서 반복되는 캡처는 "위 행과 같은 캡처" 로 표시,
-#   보낸 메일을 MAIL_MOVE_TO_FOLDER 로 옮길 때 최대 MOVE_WAIT_SEC 기다림, --test 메일도 옮김
 # (이전 버전 이력은 git history / GitHub Releases 참조 — 헤더에는 최근 2개 항목만 남긴다)
 r"""
 promo_change_mail — promo_link_checker 가 새로 캡처한 클릭 요소(신규 · 디자인변경)를 모아 메일로 알린다.
@@ -59,6 +58,16 @@ KINDS: tuple[str, ...] = ("new", "changed")
 SINCE_DAYS: int = 1
 # 기간 안에 처음 hit 된 sitecode 는 뺀다 (checker 의 첫 hit 메일과 겹치지 않게 — 그 site 요소는 전부 신규라 중복이 된다)
 SKIP_FIRST_HIT_SITES: bool = True
+
+# ─── 기간 진행중인데 감지 안 된 site (맨 위 요약에 한 줄) ──────────────
+# 캠페인 일정 엑셀 — 올해 기간 안인데 checker 최신 결과에 hit(O)가 하나도 없는 site 를 요약에 적는다. 비우면 안 적는다.
+SCHEDULE_XLSX: str = ""
+SCHEDULE_SHEET: str = "MASTER"
+# 머리글 행 번호 (SCHEDULE_SITE_HEADER 가 있는 행)
+SCHEDULE_HEADER_ROW: int = 4
+SCHEDULE_SITE_HEADER: str = "Site Code"
+# 올해 기간 열 (시작, 끝) — 하나라도 오늘이 들어가면 진행중. 날짜가 아닌 칸('X' 등)은 무시
+SCHEDULE_PERIOD_COLS: list[tuple[str, str]] = [("H", "I"), ("J", "K"), ("L", "M")]
 
 # ─── 메일 모양 ─────────────────────────────────────────────────────
 # 제목 = checker 의 MAIL_SUBJECT_PREFIX + 아래 꼬리표. checker 접두를 그대로 쓰므로
@@ -154,6 +163,64 @@ def collect(state: dict, days: set[str], sent: dict, resend: bool) -> dict[str, 
     return by_site
 
 
+def undetected_sites(m, today: str) -> list[str] | None:
+    """일정 엑셀 기준 오늘 진행중인데 checker 오늘 결과에 hit(O)가 없는 sitecode — "ua", "mn(점검 목록 밖)" 형태.
+    괄호: 점검 목록 밖 = checker SITECODES 에 없음(주석 처리 포함), 오늘 결과 없음 = 목록엔 있는데 오늘 결과 행이 없음,
+    접속 실패 = 결과가 O/X 가 아닌 것(접근실패 등)만 있음.
+    SCHEDULE_XLSX 가 비었거나 읽을 수 없으면 None (요약 줄을 안 적는다)."""
+    if not SCHEDULE_XLSX.strip():
+        return None
+    try:
+        import openpyxl
+        from openpyxl.utils import column_index_from_string
+        wb = openpyxl.load_workbook(SCHEDULE_XLSX, read_only=True, data_only=True)
+        rows = list(wb[SCHEDULE_SHEET].iter_rows(min_row=SCHEDULE_HEADER_ROW, values_only=True))
+        wb.close()
+    except Exception as e:
+        print(f"⚠ 일정 엑셀을 못 읽어 '감지 안 됨' 요약을 뺀다: {e}")
+        return None
+    site_idx = [str(c).strip() if c is not None else "" for c in rows[0]].index(SCHEDULE_SITE_HEADER)
+    pairs = [(column_index_from_string(a) - 1, column_index_from_string(b) - 1) for a, b in SCHEDULE_PERIOD_COLS]
+    in_period: list[str] = []
+    for row in rows[1:]:
+        sc = str(row[site_idx] or "").strip().lower() if site_idx < len(row) else ""
+        if not sc:
+            continue
+        for a, b in pairs:
+            s, e = (row[a] if a < len(row) else None), (row[b] if b < len(row) else None)
+            if isinstance(s, datetime) and isinstance(e, datetime) and s.date().isoformat() <= today <= e.date().isoformat():
+                in_period.append(sc)
+                break
+    # checker 오늘 결과 — 일일 리포트의 오늘 날짜 블록 첫 열(결과). 결과 CSV 는 완주하면 지워지므로 리포트를 본다.
+    results: dict[str, set[str]] = defaultdict(set)
+    try:
+        wb = openpyxl.load_workbook(m.OUTPUT_DIR / m.DAILY_REPORT_NAME, read_only=True, data_only=True)
+        rep = list(wb.active.iter_rows(values_only=True))
+        wb.close()
+        mmdd = today[5:7] + today[8:10]          # checker 의 run_date 형식 (%m%d)
+        col = next((i for i, v in enumerate(rep[0]) if i >= m.REPORT_FIXED_COLS and str(v or "") == mmdd), None)
+        if col is not None:
+            for row in rep[2:]:
+                if row[0] and col < len(row) and row[col] is not None:
+                    results[str(row[0]).strip().lower()].add(str(row[col]).strip())
+    except Exception as e:
+        print(f"⚠ 일일 리포트를 못 읽음: {e}")
+    if not results:
+        print("⚠ checker 오늘 결과가 없어 '감지 안 됨' 요약을 뺀다.")
+        return None
+    checked = set(m.parse_sitecodes())
+    out = []
+    for sc in sorted(set(in_period)):
+        got = results.get(sc)
+        if sc not in checked:
+            out.append(f"{sc}(점검 목록 밖)")
+        elif got is None:
+            out.append(f"{sc}(오늘 결과 없음)")
+        elif "O" not in got:
+            out.append(sc + ("(접속 실패)" if any(x not in ("O", "X") for x in got) else ""))
+    return out
+
+
 def _desc(design: dict, first_seen: str, esc) -> str:
     """요소 한 줄 설명 — 날짜 · 카드 종류 · 크기 + 이미지 파일명 또는 텍스트."""
     classes = " ".join(design.get("classes") or [])
@@ -168,7 +235,8 @@ def _desc(design: dict, first_seen: str, esc) -> str:
     return f'<b>{esc(first_seen)}</b> · {esc(kind)}{esc(size_s)}<span style="color:#555">{detail}</span>'
 
 
-def build_html(m, by_site: dict[str, list[dict]], days: list[str]) -> tuple[str, list[tuple[str, Path]], dict]:
+def build_html(m, by_site: dict[str, list[dict]], days: list[str],
+               undetected: list[str] | None = None) -> tuple[str, list[tuple[str, Path]], dict]:
     """sitecode 별 표 — 한 행 = 같은 캡처 쌍(전 · 후)을 공유하는 요소 묶음. 전 / 후 캡처 이미지를 나란히 놓는다."""
     esc = html.escape
     counts = defaultdict(int)
@@ -189,6 +257,9 @@ def build_html(m, by_site: dict[str, list[dict]], days: list[str]) -> tuple[str,
             sites_s = ", ".join(f"{sc}({n})" for sc, n in sorted(per.items()))
             lines.append(f'<li><b style="color:{_KIND_COLORS.get(kind, "#666")}">{esc(m.KIND_LABELS.get(kind, kind))}</b> '
                          f"{len(per)}개 site: {esc(sites_s)}</li>")
+    if undetected is not None:
+        lines.append(f'<li><b style="color:#666">기간 진행중 · 감지 안 됨</b> {len(undetected)}개 site: '
+                     f'{esc(", ".join(undetected)) if undetected else "없음"}</li>')
     parts.append(f'<ul style="margin:4px 0 10px">{"".join(lines)}</ul>')
     images: list[tuple[str, Path]] = []
     cid_of: dict[Path, str] = {}       # 같은 캡처는 메일에 한 번만 싣는다
@@ -319,7 +390,10 @@ def main() -> int:
         print("보낼 요소 없음.")
         return 0
 
-    body, images, counts = build_html(m, by_site, days)
+    undetected = undetected_sites(m, days[-1])
+    if undetected is not None:
+        print(f"기간 진행중 · 감지 안 됨 {len(undetected)}개: {', '.join(undetected) or '없음'}")
+    body, images, counts = build_html(m, by_site, days, undetected)
     summary = " · ".join(f"{m.KIND_LABELS.get(k, k)} {counts[k]}" for k in KINDS if counts[k])
     subject = f"{m.MAIL_SUBJECT_PREFIX}{SUBJECT_TAG} {days[-1][5:]} {summary} ({len(by_site)}개 site: {', '.join(sorted(by_site))})"
     print(subject)
