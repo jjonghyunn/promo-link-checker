@@ -278,9 +278,10 @@ Get-ScheduledTask -TaskName "promo_link_checker_<캠페인>" | Get-ScheduledTask
   `MAIL_SUBJECT_PREFIX` · `MAIL_MOVE_TO_FOLDER` 등을 그대로 쓴다 → 캠페인 사본마다 이 파일만 복사하면 된다.
 - **대상**: `_capture_state.json` 에서 `SINCE_DAYS`(기본 1 = 오늘) 안에 처음 기록된 `KINDS`(기본 신규 · 디자인변경) 요소.
 - **중복 방지**: 보낸 요소는 `output/_change_mail_sent.json` 에 남겨 하루에 몇 번 돌려도 같은 요소는 다시 안 간다.
-- **본문**: sitecode 별 비교표 `페이지 | 구분 | 링크 | 항목 | 전 | 후` + 후 / 전 캡처 이미지(sitecode 당 각 최대 `MAIL_MAX_IMAGES_PER_SITE` 장).
-  - 디자인변경: 같은 링크의 직전 기록과 비교해 **달라진 항목만**(이미지 파일명 · 텍스트 · 크기 · class) 적고 후 칸을 노란색으로 칠한다.
-  - 신규: 전은 `—`, 후에 그 요소의 값.
+- **본문**: sitecode 별 비교표 `페이지 | 요소 | 전 | 후` — **전 / 후 캡처 이미지를 한 행에 나란히** 놓는다
+  (이미지 가로 `COMPARE_IMAGE_WIDTH`, sitecode 당 최대 `MAIL_MAX_IMAGES_PER_SITE` 행, 넘치면 파일명 목록).
+  - 같은 캡처 쌍을 공유하는 요소는 한 행으로 묶고, 요소 칸에 구분(신규 / 디자인변경) · 링크 · 텍스트를 적는다.
+  - 디자인변경: 전 = 같은 링크의 직전 기록 캡처. 신규: 전은 `— (신규)`.
 - **제목**: `<MAIL_SUBJECT_PREFIX>[변경] MM-DD 신규 N · 디자인변경 N (N개 site: …)`. checker 접두를 그대로 쓰므로
   checker 가 돌 때 받은 메일을 `MAIL_MOVE_TO_FOLDER` 로 같이 옮긴다.
 
