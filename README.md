@@ -291,6 +291,7 @@ Get-ScheduledTask -TaskName "promo_link_checker_<캠페인>" | Get-ScheduledTask
 |---|---|
 | `CHANGE_MAIL_TO` | 받는 사람 (세미콜론 구분). 비우면 자기 자신. checker 의 `MAIL_TO` 와 따로 둔다 |
 | `KINDS` | 알릴 종류 — `new` 신규 / `changed` 디자인변경 / `recapture` 재캡처 |
+| `SKIP_FIRST_HIT_SITES` | 기간 안에 처음 hit 된 sitecode 는 뺀다 — checker 의 첫 hit 메일과 겹치지 않게 |
 | `SINCE_DAYS` | 오늘 포함 며칠 안의 기록을 볼지 |
 | `CARD_KINDS` | class 문자열 → 카드 종류 이름 (요소 설명에 쓴다) |
 | `MOVE_WAIT_SEC` | 보낸 메일이 받은편함에 올 때까지 기다렸다가 checker 의 `MAIL_MOVE_TO_FOLDER` 로 옮기는 최대 시간(초) |
@@ -303,4 +304,4 @@ python promo_change_mail.py --test       # 본인에게만 [TEST] 로 (보낸 �
 python promo_change_mail.py --day 2026-11-20 --resend   # 그날 요소를 다시 보냄
 ```
 
-checker 실행이 끝난 뒤 돌려야 그 실행의 새 캡처가 들어간다 (작업 스케줄러에서 checker 작업 다음 시각에 별도 작업으로 등록).
+checker 실행이 끝난 뒤 돌려야 그 실행의 새 캡처가 들어간다 → 작업 스케줄러에서 checker 작업의 **두 번째 동작**으로 등록한다 (동작은 순서대로 돌아 감지가 끝나면 바로 메일이 나간다). `pythonw` 로 돌면 출력은 `output/_change_mail_latest.log`.

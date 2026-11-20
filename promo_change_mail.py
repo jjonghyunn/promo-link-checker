@@ -1,9 +1,10 @@
 # promo_change_mail.py
 # 2026-11-20  Jonghyun Park w/ Claude
+# updated: 2026-11-20 — v1.4: 기간 안에 처음 hit 된 site 는 제외(SKIP_FIRST_HIT_SITES — 첫 hit 메일과 중복 방지),
+#   pythonw 실행 시 output/_change_mail_latest.log 에 기록 (checker 작업의 두 번째 동작으로 등록)
 # updated: 2026-11-20 — v1.3: 본문을 종류별 절로 나눔 (신규 절이 위, 디자인변경 절이 아래 — KINDS 순서),
 #   맨 위에 종류별 site 요약, 같은 표에서 반복되는 캡처는 "위 행과 같은 캡처" 로 표시,
 #   보낸 메일을 MAIL_MOVE_TO_FOLDER 로 옮길 때 최대 MOVE_WAIT_SEC 기다림, --test 메일도 옮김
-# updated: 2026-11-20 — v1.2: 디자인변경은 앞선 날짜 기록이 있을 때만 (같은 날 같은 링크의 다른 요소는 신규), 전 / 후 칸에 요소 설명 추가
 # (이전 버전 이력은 git history / GitHub Releases 참조 — 헤더에는 최근 2개 항목만 남긴다)
 r"""
 promo_change_mail — promo_link_checker 가 새로 캡처한 클릭 요소(신규 · 디자인변경)를 모아 메일로 알린다.
@@ -30,7 +31,7 @@ sitecode 에서 새 배너가 붙거나 디자인이 바뀐 것은 캡처 · 리
     텍스트 카드 등)는 checker 가 디자인변경으로 적어도 신규로 본다.
   - 신규: 전은 "— (신규)".
 
-  promo_link_checker 실행 직후에 돌리면 된다 (작업 스케줄러에서 checker 다음 동작으로 추가하거나 별도 작업).
+  작업 스케줄러에서 checker 작업의 **두 번째 동작**으로 등록한다 — 동작은 순서대로 돌므로 감지가 끝나면 바로 메일이 나간다.
 """
 from __future__ import annotations
 
@@ -56,6 +57,8 @@ CHANGE_MAIL_TO: str = ""
 KINDS: tuple[str, ...] = ("new", "changed")
 # 오늘 포함 며칠 안에 처음 기록된 요소를 볼지 (1 = 오늘만). 보낸 기록이 있어 겹쳐도 다시 가지 않는다.
 SINCE_DAYS: int = 1
+# 기간 안에 처음 hit 된 sitecode 는 뺀다 (checker 의 첫 hit 메일과 겹치지 않게 — 그 site 요소는 전부 신규라 중복이 된다)
+SKIP_FIRST_HIT_SITES: bool = True
 
 # ─── 메일 모양 ─────────────────────────────────────────────────────
 # 제목 = checker 의 MAIL_SUBJECT_PREFIX + 아래 꼬리표. checker 접두를 그대로 쓰므로
@@ -77,6 +80,8 @@ CARD_KINDS: dict[str, str] = {"image-link": "이미지 카드", "text-link": "�
 CHECKER_GLOB: str = "promo_link_checker_v*.py"
 SENT_LOG_NAME: str = "_change_mail_sent.json"
 PREVIEW_HTML_NAME: str = "_change_mail_preview.html"
+# pythonw(작업 스케줄러)로 돌 때 출력 · 에러를 남길 로그 (매 실행 덮어씀)
+RUN_LOG_NAME: str = "_change_mail_latest.log"
 
 # ════════════════════════════════ 내부 사용 ════════════════════════════════
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -118,8 +123,19 @@ def _previous(fps: dict, fp: str, first_seen: str) -> dict | None:
 def collect(state: dict, days: set[str], sent: dict, resend: bool) -> dict[str, list[dict]]:
     """{sitecode: [요소 행, ...]} — days 안에 처음 기록됐고 아직 안 보낸 KINDS 요소. 행에 직전 기록(before)을 붙인다."""
     by_site: dict[str, list[dict]] = defaultdict(list)
+    # sitecode 별 가장 이른 기록일 — 기간 안에 처음 기록된 site 는 checker 의 첫 hit 메일이 이미 알렸다
+    site_first: dict[str, str] = {}
+    for state_key, bucket in state.items():
+        sc = state_key.partition("|")[0]
+        for fps in bucket.values():
+            for v in fps.values():
+                d = v.get("first_seen", "")
+                if d and (sc not in site_first or d < site_first[sc]):
+                    site_first[sc] = d
     for state_key, bucket in state.items():
         sc, _, page = state_key.partition("|")
+        if SKIP_FIRST_HIT_SITES and site_first.get(sc, "") >= min(days):
+            continue
         for el_key, fps in bucket.items():
             for fp, v in fps.items():
                 if v.get("kind") not in KINDS or v.get("first_seen") not in days:
@@ -284,6 +300,10 @@ def main() -> int:
         args.resend = True
 
     m, checker_path = load_checker()
+    if sys.stdout is None:           # pythonw — 콘솔이 없으니 로그 파일로
+        m.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        sys.stdout = sys.stderr = open(m.OUTPUT_DIR / RUN_LOG_NAME, "w", encoding="utf-8", buffering=1)
+        print(datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "promo_change_mail 시작")
     if args.day:
         days = [args.day]
     else:
