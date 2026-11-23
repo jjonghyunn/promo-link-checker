@@ -1,3 +1,4 @@
 playwright
 openpyxl
 pywin32  # 메일 알림(MAIL_ON_FIRST_HIT)을 켤 때만 필요 (Windows + Outlook)
+pillow  # 영역 이미지 해시(IMAGE_HASH_MODE)용 — 없으면 해시만 건너뛴다

@@ -1,11 +1,11 @@
-# promo_link_checker_v1.4.py
+# promo_link_checker_v1.5.py
 # 2026-11-23  Jonghyun Park w/ Claude
+# updated: 2026-11-23 — v1.5: hit 요소 영역만 따로 찍어 dHash(64비트 이미지 해시)를 만들고, 지난 실행과의 거리(0~64)를
+#                       output/_image_hash_log.csv 에 남긴다 (IMAGE_HASH_MODE 기본 "log" = 캡처 판정에는 안 씀).
+#                       "detect" 로 바꾸면 DOM 지문이 같아도 거리가 IMAGE_HASH_THRESHOLD 를 넘을 때 디자인 변경으로 보고 다시 캡처한다.
 # updated: 2026-11-23 — KEYWORDS 줄 끝 '@sitecode,…' 로 규칙을 특정 sitecode 에만 적용할 수 있게 했다
 #                       (흔한 표현이 다른 나라 상시 페이지(GNB 메뉴 등)에 걸리는 오탐 방지).
 #                       리포트·메일의 매칭키워드에는 '@…' 를 뺀 키워드만 적는다.
-# updated: 2026-11-20 — 첫 hit 메일 본문에서 보내는 PC 의 절대경로를 뺐다 (받는 사람마다 로컬 경로 앞부분이 다르다):
-#                       리포트 경로 줄 제거, 캡처 파일은 CAPTURE_DIR 기준 상대경로로 적고,
-#                       캡처 폴더는 맨 아래에 한 번만 적는다 (사용자 홈 아래면 홈을 뗀 경로)
 # (이전 버전 이력은 git history / GitHub Releases 참조 — 헤더에는 최근 2개 항목만 남긴다)
 r"""
 promo_link_checker — 국가별 홈 · 프로모션(offer) 페이지의 클릭 가능한 요소 중에
@@ -18,6 +18,7 @@ promo_link_checker — 국가별 홈 · 프로모션(offer) 페이지의 클릭 
   → 처음 보는 hit 요소(또는 디자인이 바뀐 요소)가 있을 때만 빨간 테두리 + 번호 배지를 그려 전체 페이지 캡처 (1회성)
     캡처 맨 위 범례 박스에 번호별 링크를 적고, 접힌 메뉴 안이라 안 보이는 요소는 메뉴를 펼쳐 찍는다
     (새 요소가 전부 접힌 메뉴 안이면 전체 캡처 없이 펼친 캡처만. GNB/Footer 요소는 sitecode 당 한 번만)
+  → (IMAGE_HASH_MODE) 화면에 보이는 hit 요소 영역의 이미지 해시를 지난 실행과 비교 — 같은 URL 에 그림만 바뀐 경우용
   → output/_daily_report.xlsx 에 하루 1블록 누적 (최신이 D~F열, 과거는 오른쪽으로 밀림)
 
 키워드 규칙 (KEYWORDS):
@@ -31,20 +32,22 @@ promo_link_checker — 국가별 홈 · 프로모션(offer) 페이지의 클릭 
     예) "galaxy gifts @pl,bg" → pl·bg 페이지에서만 hit. 상시 페이지가 같은 표현을 쓰는 다른 나라(uk 등)의 오탐 방지.
 
 사용 예:
-  python promo_link_checker_v1.4.py
-  python promo_link_checker_v1.4.py --sitecodes ae,hq
-  python promo_link_checker_v1.4.py --pages home
-  python promo_link_checker_v1.4.py --sitecodes uk --debug --no-capture
-  python promo_link_checker_v1.4.py --no-mail          (첫 hit 메일 알림을 이번 실행만 끔)
+  python promo_link_checker_v1.5.py
+  python promo_link_checker_v1.5.py --sitecodes ae,hq
+  python promo_link_checker_v1.5.py --pages home
+  python promo_link_checker_v1.5.py --sitecodes uk --debug --no-capture
+  python promo_link_checker_v1.5.py --no-mail          (첫 hit 메일 알림을 이번 실행만 끔)
 
 출력 (스크립트 폴더 기준):
   output/_daily_report.xlsx                      일일 누적 리포트 (유일한 상시 산출물)
   <CAPTURE_DIR>/<sitecode>/<sitecode>_<page>_<YYMMDD>_<HHMM>.jpg  화면에 보이는 새 요소·디자인 변경이 있을 때만
   <CAPTURE_DIR>/<sitecode>/<sitecode>_<page>_menu_<YYMMDD>_<HHMM>.jpg  hit 요소가 접힌 메뉴 안에 있을 때, 메뉴를 펼친 화면
   output/_capture_state.json                     이미 캡처한 요소 기록 (지우면 처음부터 다시 캡처)
+  output/_image_hash_state.json                  요소 영역별 마지막 이미지 해시 (IMAGE_HASH_MODE 가 off 가 아닐 때)
+  output/_image_hash_log.csv                     실행마다 요소 영역별 해시 거리 누적 (기준값 정하기용)
   output/_run_latest.log                         매 실행 덮어씀 (pythonw 스케줄 실행 추적용)
 
-의존성: playwright, openpyxl, pywin32(메일 알림을 켤 때만)   (설치 후 `python -m playwright install chromium` 1회)
+의존성: playwright, openpyxl, Pillow(IMAGE_HASH_MODE 를 켤 때만), pywin32(메일 알림을 켤 때만)   (설치 후 `python -m playwright install chromium` 1회)
 """
 from __future__ import annotations
 
@@ -52,6 +55,7 @@ import argparse
 import csv
 import hashlib
 import html
+import io
 import json
 import logging
 import os
@@ -255,6 +259,21 @@ FINGERPRINT_SIZE_STEP: int = 20
 FINGERPRINT_SIZE_TOLERANCE: int = 20
 # 캐러셀·레이지 로딩이 로드할 때마다 바꾸는 상태 class — 지문에서 뺀다 (정규식, 대소문자 무시)
 FINGERPRINT_CLASS_IGNORE: str = r"active|current|visible|hidden|loaded|loading|lazy|hover|focus|prev|next|duplicate|selected|animat|is-|swiper-slide-"
+# ── 영역 이미지 해시 (dHash) ──
+# 위 DOM 지문은 이미지 URL 이 같으면 그림이 바뀌어도 모른다. 그래서 화면에 보이는 hit 요소 영역만 따로 찍어
+# dHash(64비트)를 만들고, 지난 실행에서 같은 요소의 해시와 다른 비트 수(해밍 거리 0~64)를 잰다.
+#   "off"    = 안 한다
+#   "log"    = 거리만 _image_hash_log.csv 에 남긴다 (캡처 판정에는 안 씀 — 기준값을 정하는 기간용)
+#   "detect" = DOM 지문으로는 이미 찍은 요소라도 거리가 IMAGE_HASH_THRESHOLD 를 넘으면 디자인 변경으로 보고 다시 찍는다
+IMAGE_HASH_MODE: str = "log"
+# 이 값보다 거리가 크면 "바뀜". 압축·렌더링 노이즈는 보통 0~5. 로그를 며칠 보고 조정한다.
+IMAGE_HASH_THRESHOLD: int = 10
+# 한 페이지에서 영역을 찍을 hit 요소 최대 개수 (실행 시간 제한). 가로·세로가 이 px 보다 작은 요소는 건너뛴다.
+IMAGE_HASH_MAX_PER_PAGE: int = 20
+IMAGE_HASH_MIN_SIZE: int = 16
+IMAGE_HASH_TIMEOUT_MS: int = 5000
+IMAGE_HASH_STATE_NAME: str = "_image_hash_state.json"
+IMAGE_HASH_LOG_NAME: str = "_image_hash_log.csv"
 # 캡처 시 테두리: 새로 찍는 이유가 된 요소(신규·디자인 변경) / 이미 찍은 적 있는 요소
 # 기본은 둘을 같은 색으로 둔다 (구분은 범례의 신규/디자인변경/기존 표기로). 색으로 나누려면 KNOWN 쪽 값을 바꾼다.
 HIGHLIGHT_STYLE: str = "4px solid red"
@@ -378,7 +397,9 @@ LOGGER_NAME = "promo_link_checker"
 logger = logging.getLogger(LOGGER_NAME)
 
 RESULT_COLUMNS = ["sitecode", "page", "url", "final_url", "result", "keywords", "links",
-                  "capture", "more_captures", "prev_capture", "new_elements", "detail", "checked_at"]
+                  "capture", "more_captures", "prev_capture", "new_elements", "image_hashes", "detail", "checked_at"]
+IMAGE_HASH_LOG_COLUMNS = ["checked_at", "sitecode", "page", "n", "element", "link", "dom_kind",
+                          "hash", "prev_hash", "distance", "over_threshold"]
 _RE_CSS_URL = re.compile(r"""url\(["']?([^"')]+)["']?\)""")
 _RE_DIGITS = re.compile(r"\d+")
 _RE_URI_ESCAPE = re.compile(r"[%# ]")       # file:// 하이퍼링크에서 인코딩할 글자 (_capture_link)
@@ -922,6 +943,116 @@ def _same_design(a: dict, b: dict) -> bool:
     return all(abs(x - y) <= FINGERPRINT_SIZE_TOLERANCE for x, y in zip(sa, sb))
 
 
+# ─── 영역 이미지 해시 (dHash) ──────────────────────────────────────
+
+_image_hash_warned = False
+
+
+def dhash_png(data: bytes, size: int = 8) -> str:
+    """이미지 바이트 → dHash 16자리 hex. 흑백 (size+1)×size 로 줄인 뒤 가로로 이웃한 픽셀 밝기 비교."""
+    from PIL import Image
+    with Image.open(io.BytesIO(data)) as im:
+        px = im.convert("L").resize((size + 1, size), Image.LANCZOS).tobytes()
+    bits = 0
+    for r in range(size):
+        row = px[r * (size + 1):(r + 1) * (size + 1)]
+        for c in range(size):
+            bits = (bits << 1) | (row[c] > row[c + 1])
+    return f"{bits:0{size * size // 4}x}"
+
+
+def hash_distance(a: str, b: str) -> int:
+    """두 dHash 의 해밍 거리 (다른 비트 수)."""
+    return bin(int(a, 16) ^ int(b, 16)).count("1")
+
+
+def _image_hash_keys(hit_items: list[dict]) -> list[str]:
+    """요소별 기록 키 = 링크키#순번 (같은 링크가 한 페이지에 여러 요소면 DOM 순서로 1, 2, …)."""
+    seen: dict[str, int] = {}
+    keys = []
+    for it in hit_items:
+        ekey = element_key(it["abs"] or it["href"])
+        seen[ekey] = seen.get(ekey, 0) + 1
+        keys.append(f"{ekey}#{seen[ekey]}")
+    return keys
+
+
+def _compute_image_hashes(page: Page, hit_items: list[dict], descs: list, known_img: dict, tag: str) -> dict:
+    """화면에 보이는 hit 요소 영역을 찍어 dHash 계산 → {idx: {"key", "hash", "prev", "dist"}}.
+    숨은 요소·너무 작은 요소·찍기 실패한 요소는 빠진다. 찍은 뒤 맨 위로 스크롤을 되돌린다."""
+    global _image_hash_warned
+    out: dict[int, dict] = {}
+    if IMAGE_HASH_MODE not in ("log", "detect"):
+        return out
+    try:
+        import PIL  # noqa: F401
+    except ImportError:
+        if not _image_hash_warned:
+            _image_hash_warned = True
+            logger.warning("⚠️ Pillow 가 없어 영역 이미지 해시를 건너뜁니다 (pip install pillow)")
+        return out
+    keys = _image_hash_keys(hit_items)
+    done = 0
+    for it, desc, hkey in zip(hit_items, descs, keys):
+        if done >= IMAGE_HASH_MAX_PER_PAGE:
+            break
+        d = desc or {}
+        if not d.get("visible", True) or d.get("w", 0) < IMAGE_HASH_MIN_SIZE or d.get("h", 0) < IMAGE_HASH_MIN_SIZE:
+            continue
+        try:
+            data = page.locator(f'[data-plc-idx="{it["idx"]}"]').first.screenshot(
+                type="png", animations="disabled", timeout=IMAGE_HASH_TIMEOUT_MS)
+            h = dhash_png(data)
+        except Exception as e:
+            logger.debug("[%s] 영역 해시 실패 #%s: %s", tag, it.get("n"), str(e).splitlines()[0][:150])
+            continue
+        done += 1
+        prev = (known_img.get(hkey) or {}).get("hash", "")
+        out[it["idx"]] = {"key": hkey, "hash": h, "prev": prev,
+                          "dist": hash_distance(h, prev) if prev else None}
+    try:
+        page.evaluate("() => window.scrollTo(0, 0)")
+    except Exception:
+        pass
+    return out
+
+
+def _load_json_state(name: str, label: str) -> dict:
+    path = OUTPUT_DIR / name
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception as e:
+        logger.warning("⚠️ %s 파일을 읽지 못해 새로 시작합니다: %s (%s)", label, path.name, e)
+        return {}
+
+
+def _save_json_state(name: str, state: dict, label: str) -> None:
+    path = OUTPUT_DIR / name
+    tmp = path.with_name(path.name + ".tmp")
+    try:
+        tmp.write_text(json.dumps(state, ensure_ascii=False, indent=1), encoding="utf-8")
+        os.replace(tmp, path)
+    except Exception as e:
+        logger.warning("⚠️ %s 저장 실패: %s", label, e)
+
+
+def _append_image_hash_log(rows: list[dict]) -> None:
+    if not rows:
+        return
+    path = OUTPUT_DIR / IMAGE_HASH_LOG_NAME
+    new = not path.exists()
+    try:
+        with open(path, "a", encoding="utf-8-sig", newline="") as f:
+            w = csv.DictWriter(f, fieldnames=IMAGE_HASH_LOG_COLUMNS)
+            if new:
+                w.writeheader()
+            w.writerows(rows)
+    except Exception as e:
+        logger.warning("⚠️ 이미지 해시 로그 기록 실패: %s", e)
+
+
 def load_capture_state() -> dict:
     """{"sitecode|page": {링크키: {지문: {"first_seen", "capture", "design"}}}}"""
     path = OUTPUT_DIR / CAPTURE_STATE_NAME
@@ -976,12 +1107,12 @@ class RetryableHttpStatus(Exception):
 
 
 def _result(sitecode, page, url, result, final_url="", keywords="", links="", capture="", detail="",
-            prev_capture="", new_elements="", more_captures=""):
+            prev_capture="", new_elements="", more_captures="", image_hashes=""):
     return {
         "sitecode": sitecode, "page": page, "url": url, "final_url": final_url, "result": result,
         "keywords": keywords, "links": links, "capture": capture, "more_captures": more_captures,
         "prev_capture": prev_capture,
-        "new_elements": new_elements, "detail": detail,
+        "new_elements": new_elements, "image_hashes": image_hashes, "detail": detail,
         "checked_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     }
 
@@ -1194,10 +1325,12 @@ def _rescroll_hidden(page: Page, hit_items: list[dict], descs: list, tag: str) -
 
 
 def check_site(sitecode: str, page_key: str, rules, capture: bool, run_date: str,
-               known: dict | None = None, known_site: dict | None = None) -> dict:
+               known: dict | None = None, known_site: dict | None = None, known_img: dict | None = None) -> dict:
     """known = 이 (sitecode, page) 의 캡처 기록 {링크키: {지문: info}} — 읽기 전용.
-    known_site = 이 sitecode 전 페이지의 기록을 합친 것 — GNB/Footer 요소는 여기서 찾는다 (미지정 시 known)."""
+    known_site = 이 sitecode 전 페이지의 기록을 합친 것 — GNB/Footer 요소는 여기서 찾는다 (미지정 시 known).
+    known_img = 이 (sitecode, page) 의 영역 이미지 해시 기록 {링크키#순번: {"hash", …}} — 읽기 전용."""
     known = known or {}
+    known_img = known_img or {}
     known_site = known if known_site is None else known_site
     url = build_url(sitecode, page_key)
     tag = f"{sitecode}/{page_key}"
@@ -1256,6 +1389,8 @@ def check_site(sitecode: str, page_key: str, rules, capture: bool, run_date: str
         for n, (it, desc) in enumerate(zip(hit_items, descs), start=1):
             it["n"] = n                                              # 캡처 배지·범례 번호
             it["hidden"] = not (desc or {}).get("visible", True)     # 접힌 메뉴 안 등 화면에 안 보임
+        # 영역 이미지 해시 — 테두리·범례를 그리기 전에 찍는다
+        img_hashes = _compute_image_hashes(page, hit_items, descs, known_img, tag)
         new_elems: dict[tuple[str, str], dict] = {}     # (링크키, 지문) → 신규/변경 정보
         link_kind: dict[str, str] = {}                  # 링크키 → "new" / "changed" / "recapture" / "known"
         prev_captures: list[tuple[str, str]] = []       # (first_seen, capture)
@@ -1268,13 +1403,20 @@ def check_site(sitecode: str, page_key: str, rules, capture: bool, run_date: str
             match_fp = fp if fp in seen_fps else next(
                 (f for f, inf in seen_fps.items() if _same_design(design, inf.get("design") or {})), fp)
             # 기록에 있어도 그 캡처 파일이 실제로 없으면(지워짐·옮겨짐) 다시 찍는다
-            if match_fp in seen_fps and (not VERIFY_CAPTURE_EXISTS or _capture_exists(seen_fps[match_fp].get("capture", ""))):
+            img = img_hashes.get(it["idx"]) or {}
+            img_changed = (IMAGE_HASH_MODE == "detect" and img.get("dist") is not None
+                           and img["dist"] > IMAGE_HASH_THRESHOLD)
+            if img_changed:
+                logger.debug("[%s] #%s 영역 이미지 변화 거리 %s → 디자인 변경으로 다시 찍는다", tag, it["n"], img["dist"])
+            if (match_fp in seen_fps and not img_changed
+                    and (not VERIFY_CAPTURE_EXISTS or _capture_exists(seen_fps[match_fp].get("capture", "")))):
                 it["kind"] = "known"
                 info = seen_fps[match_fp]
                 prev_captures.append((info.get("first_seen", ""), info.get("capture", "")))
                 link_kind.setdefault(ekey, "known")
                 continue
-            kind = "recapture" if match_fp in seen_fps else "changed" if seen_fps else "new"
+            kind = ("changed" if img_changed else "recapture" if match_fp in seen_fps
+                    else "changed" if seen_fps else "new")
             it["kind"] = kind
             new_elems.setdefault((ekey, fp), {"key": ekey, "fp": fp, "kind": kind, "design": design,
                                               "idxs": []})["idxs"].append(it["idx"])
@@ -1359,6 +1501,10 @@ def check_site(sitecode: str, page_key: str, rules, capture: bool, run_date: str
                        prev_capture=prev,
                        # 캡처에 성공했을 때만 기록 대상으로 넘긴다 (못 찍었으면 다음 실행에서 다시 시도)
                        new_elements=json.dumps(list(new_elems.values()), ensure_ascii=False) if capture_rel else "",
+                       image_hashes=json.dumps([{**img_hashes[it["idx"]], "n": it["n"], "kind": it.get("kind", ""),
+                                                 "link": it["abs"] or it["href"]}
+                                                for it in hit_items if it["idx"] in img_hashes],
+                                               ensure_ascii=False) if img_hashes else "",
                        detail=f"clickable {len(items)} / hit {len(hit_items)} / new {len(new_elems)}")
     finally:
         try:
@@ -1368,14 +1514,15 @@ def check_site(sitecode: str, page_key: str, rules, capture: bool, run_date: str
 
 
 def check_site_with_retry(sitecode: str, page_key: str, rules, capture: bool, run_date: str,
-                          known: dict | None = None, known_site: dict | None = None) -> dict:
+                          known: dict | None = None, known_site: dict | None = None,
+                          known_img: dict | None = None) -> dict:
     last_error = ""
     last_status = None
     for attempt in range(RETRY_COUNT + 1):
         if attempt:
             time.sleep(RETRY_DELAY_SEC)
         try:
-            return check_site(sitecode, page_key, rules, capture, run_date, known, known_site)
+            return check_site(sitecode, page_key, rules, capture, run_date, known, known_site, known_img)
         except RetryableHttpStatus as e:
             last_status, last_error = e.status, f"HTTP {e.status}"
             logger.debug("[%s/%s] attempt %d: HTTP %s → retry", sitecode, page_key, attempt + 1, e.status)
@@ -1773,6 +1920,9 @@ def run(sitecodes: list[str], pages: list[str], capture: bool, run_date: str, ma
     first_hits: dict[str, list[dict]] = {}      # sitecode → 이번 실행의 hit 행들 (home · offer)
     # GNB/Footer 판정용 sitecode 단위 기록 — 워커가 자기 sitecode 것만 고친다 (앞 페이지에서 찍은 요소를 다음 페이지에 알림)
     site_known = {sc: _site_known(capture_state, sc) for sc in sitecodes}
+    # 영역 이미지 해시 기록 — 캡처 기록과 같이 워커는 읽기만, 갱신·저장은 메인 스레드
+    image_state = _load_json_state(IMAGE_HASH_STATE_NAME, "이미지 해시 기록") if IMAGE_HASH_MODE in ("log", "detect") else {}
+    image_changed: list[str] = []
     completed = False
     hits = []
     new_captures = 0
@@ -1797,7 +1947,8 @@ def run(sitecodes: list[str], pages: list[str], capture: bool, run_date: str, ma
                 for pg in pages:
                     try:
                         row = check_site_with_retry(sc, pg, rules, capture, run_date,
-                                                    capture_state.get(_state_key(sc, pg), {}), known_site)
+                                                    capture_state.get(_state_key(sc, pg), {}), known_site,
+                                                    image_state.get(_state_key(sc, pg), {}))
                     except Exception as e:          # 세션 기동 실패 등 — 결과는 반드시 한 줄 남긴다
                         row = _result(sc, pg, build_url(sc, pg), f"{RESULT_FAIL_PREFIX}(error)",
                                       detail=f"{type(e).__name__}: {str(e).splitlines()[0][:150]}")
@@ -1819,6 +1970,21 @@ def run(sitecodes: list[str], pages: list[str], capture: bool, run_date: str, ma
             row = result_q.get()
             tag = f"{row['sitecode']}/{row['page']}"
             _append_result_csv(csv_path, row)     # 메인 스레드에서만 쓴다
+            if row.get("image_hashes"):
+                img_bucket = image_state.setdefault(_state_key(row["sitecode"], row["page"]), {})
+                log_rows = []
+                for h in json.loads(row["image_hashes"]):
+                    over = h["dist"] is not None and h["dist"] > IMAGE_HASH_THRESHOLD
+                    log_rows.append({"checked_at": row["checked_at"], "sitecode": row["sitecode"], "page": row["page"],
+                                     "n": h["n"], "element": h["key"], "link": h["link"], "dom_kind": h["kind"],
+                                     "hash": h["hash"], "prev_hash": h["prev"],
+                                     "distance": "" if h["dist"] is None else h["dist"],
+                                     "over_threshold": "Y" if over else ""})
+                    if over:
+                        image_changed.append(f"{tag} #{h['n']}({h['dist']})")
+                    img_bucket[h["key"]] = {"hash": h["hash"], "updated": row["checked_at"]}
+                _append_image_hash_log(log_rows)
+                _save_json_state(IMAGE_HASH_STATE_NAME, image_state, "이미지 해시 기록")
             if row["new_elements"]:
                 bucket = capture_state.setdefault(_state_key(row["sitecode"], row["page"]), {})
                 for el in json.loads(row["new_elements"]):
@@ -1856,6 +2022,9 @@ def run(sitecodes: list[str], pages: list[str], capture: bool, run_date: str, ma
         # 보낸 직후에는 도착을 기다려 옮기고, 보낸 게 없어도 지난 실행에서 못 옮긴 메일이 있으면 옮긴다
         move_alert_mails(MAIL_MOVE_WAIT_SEC if sent else 0)
 
+    if image_changed:
+        logger.info("🖼 영역 이미지 거리 > %d (%s): %s", IMAGE_HASH_THRESHOLD,
+                    "판정 반영" if IMAGE_HASH_MODE == "detect" else "로그만", ", ".join(image_changed))
     logger.info("✅ 완료 — HIT %d건 · 새 캡처 %d건%s", len(hits), new_captures,
                 f": {', '.join(sorted(hits))}" if hits else "")
     return 0

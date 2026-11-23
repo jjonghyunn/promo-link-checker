@@ -4,7 +4,7 @@
 결과를 `_daily_report.xlsx` 에 하루 1블록씩 누적하는 도구. 캡처는 **처음 보는 hit 요소, 또는 디자인이
 바뀐 요소가 있을 때만 1회** 찍는다(매일 누적 캡처하지 않음).
 
-- 단일 파일 `promo_link_checker_v1.4.py` — 설정은 전부 상단 `사용자가 바꿔야 하는 부분` 블록.
+- 단일 파일 `promo_link_checker_v1.5.py` — 설정은 전부 상단 `사용자가 바꿔야 하는 부분` 블록.
 
 ---
 
@@ -13,6 +13,7 @@
 - Windows / Python 3.10+ / Chrome 설치
 - `pip install playwright openpyxl`
 - 메일 알림(`MAIL_ON_FIRST_HIT`)을 켤 때만: `pip install pywin32` + Outlook 데스크톱 앱
+- 영역 이미지 해시(`IMAGE_HASH_MODE`, 기본 `log`)용: `pip install pillow`. 없으면 경고만 남기고 해시를 건너뛴다
 - `python -m playwright install chromium` (최초 1회)
 
 ## 2. 설정 (파일 상단)
@@ -120,6 +121,7 @@ offer
 - `CAPTURE_ON_HIT` / `CAPTURE_FULL_PAGE` — 캡처 on/off, 전체 페이지 여부.
 - `CAPTURE_IMAGE_EXT` / `CAPTURE_JPEG_QUALITY` — 캡처 형식(기본 `.jpg`, 품질 82). `.png` 로 바꾸면 무손실로 저장한다.
 - 캡처 중복 방지 — 아래 "5. 캡처 규칙" 참고 (`CAPTURE_STATE_NAME`, `FINGERPRINT_*`, `HIGHLIGHT_*`).
+- 영역 이미지 해시 — 아래 "5. 캡처 규칙 › 영역 이미지 해시" 참고 (`IMAGE_HASH_MODE`, `IMAGE_HASH_THRESHOLD` 등).
 - 캡처 표시 — `CAPTURE_LEGEND`(맨 위 범례 박스) / `CAPTURE_BADGE`(번호 배지) / `CAPTURE_REVEAL_HIDDEN`(접힌 메뉴 펼쳐 캡처) /
   `CAPTURE_REVEAL_TABS`(안 열린 탭 눌러 캡처) on/off, `REVEAL_HOVER_WAIT_MS`·`REVEAL_TAB_WAIT_MS`·`REVEAL_MAX_CAPTURES` 등. 아래 "5. 캡처 규칙 › 캡처에서 hit 요소 찾기" 참고.
 - `COOKIE_CONSENT_SELECTORS` — 쿠키 배너 동의 버튼 셀렉터 목록. 사이트마다 배너가 달라(TrustArc / 자체 `cookie-bar`)
@@ -135,24 +137,26 @@ offer
 ## 3. 실행
 
 ```bash
-python promo_link_checker_v1.4.py                    # SITECODES 전체
-python promo_link_checker_v1.4.py --sitecodes ae,hq # 일부 국가만
-python promo_link_checker_v1.4.py --pages home       # 일부 페이지만
-python promo_link_checker_v1.4.py --no-capture       # hit 여도 캡처 안 함
-python promo_link_checker_v1.4.py --no-mail          # 처음 hit 된 sitecode 가 있어도 메일 안 보냄
-python promo_link_checker_v1.4.py --debug            # 사이트별 클릭 요소 수 등 진단 로그
+python promo_link_checker_v1.5.py                    # SITECODES 전체
+python promo_link_checker_v1.5.py --sitecodes ae,hq # 일부 국가만
+python promo_link_checker_v1.5.py --pages home       # 일부 페이지만
+python promo_link_checker_v1.5.py --no-capture       # hit 여도 캡처 안 함
+python promo_link_checker_v1.5.py --no-mail          # 처음 hit 된 sitecode 가 있어도 메일 안 보냄
+python promo_link_checker_v1.5.py --debug            # 사이트별 클릭 요소 수 등 진단 로그
 ```
 
 ## 4. 출력
 
 ```
 promo_link_checker/
-├── promo_link_checker_v1.4.py
+├── promo_link_checker_v1.5.py
 ├── README.md
 └── output/
     ├── _daily_report.xlsx            ← 일일 누적 리포트
     ├── _run_latest.log               ← 매 실행 덮어씀 (스케줄 실행 추적용)
-    └── _capture_state.json           ← 이미 캡처한 요소 기록 (지우면 처음부터 다시 캡처)
+    ├── _capture_state.json           ← 이미 캡처한 요소 기록 (지우면 처음부터 다시 캡처)
+    ├── _image_hash_state.json        ← 요소 영역별 마지막 이미지 해시 (IMAGE_HASH_MODE 가 off 가 아닐 때)
+    └── _image_hash_log.csv           ← 실행마다 요소 영역별 해시 거리 누적 (기준값 정하기용)
 
 <CAPTURE_DIR>/                        ← 캡처 저장 폴더 (절대경로 상수, output 과 별개 위치)
 └── <sitecode>/
@@ -235,6 +239,25 @@ promo_link_checker/
 - 같은 요소가 매일 다시 찍힌다면 지문이 불안정한 것 — `FINGERPRINT_FIELDS` 에서 항목을 빼거나
   `FINGERPRINT_CLASS_IGNORE` 에 그 class 를 추가한다.
 
+### 영역 이미지 해시 (2026-11-23)
+
+위 디자인 지문은 HTML 속성만 보므로, **이미지 URL 은 그대로인데 그림만 바뀐 배너**는 못 잡는다. 그래서
+화면에 보이는 hit 요소 영역만 따로 찍어(애니메이션 정지) **dHash**(64비트 이미지 해시)를 만들고,
+지난 실행의 같은 요소 해시와 **다른 비트 수(거리 0~64)** 를 잰다. Pillow 만 쓴다 (별도 이미지 비교 라이브러리 없음).
+
+| 설정 | 기본 | 내용 |
+|---|---|---|
+| `IMAGE_HASH_MODE` | `log` | `off` = 안 함 / `log` = 거리만 기록 (캡처 판정에는 안 씀) / `detect` = 거리가 기준값을 넘으면 🔄디자인변경으로 다시 캡처 |
+| `IMAGE_HASH_THRESHOLD` | `10` | 이 값보다 거리가 크면 "바뀜". 압축·렌더링 노이즈는 보통 0 ~ 5 |
+| `IMAGE_HASH_MAX_PER_PAGE` | `20` | 한 페이지에서 영역을 찍을 요소 최대 개수 |
+| `IMAGE_HASH_MIN_SIZE` | `16` | 가로·세로가 이 px 보다 작은 요소는 건너뜀 |
+
+- 요소 식별 = `링크키#순번` (같은 링크가 한 페이지에 여러 요소면 DOM 순서로 1, 2, …). 숨은 요소(접힌 메뉴·안 보이는 슬라이드)는 찍지 않는다.
+- `output/_image_hash_log.csv` 에 실행마다 `sitecode · page · 번호 · 요소 · DOM 판정 · 해시 · 이전 해시 · 거리 · 기준 초과(Y)` 를 쌓는다.
+  기준을 넘은 요소는 실행 로그 끝에 `🖼 영역 이미지 거리 > 10 …` 한 줄로도 남는다.
+- **운영 절차**: 처음 며칠은 `log` 로 두고 로그의 거리 분포를 본다 → 캐러셀·카운트다운처럼 매번 흔들리는 요소가 없는지 확인 →
+  기준값을 정한 뒤 `detect` 로 바꾼다.
+
 ## 6. 매일 자동 실행 (작업 스케줄러)
 
 **작업용 폴더와 운영 폴더를 나눈다.**
@@ -250,7 +273,7 @@ promo_link_checker/
 작업명 `promo_link_checker_<캠페인>`, 매일 **09:31 · 12:01**, `pythonw.exe` 직접 실행(콘솔 창 없음):
 
 ```powershell
-$script   = "<운영 폴더>\promo_link_checker_v1.4.py"
+$script   = "<운영 폴더>\promo_link_checker_v1.5.py"
 $action   = New-ScheduledTaskAction -Execute "C:\Python314\pythonw.exe" -Argument "`"$script`"" -WorkingDirectory (Split-Path $script)
 $trigger  = @("09:31", "12:01") | ForEach-Object { $t = New-ScheduledTaskTrigger -Daily -At $_; $t.EndBoundary = "2026-12-10T23:59:59"; $t }
 $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Hours 2) -MultipleInstances IgnoreNew
