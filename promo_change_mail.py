@@ -1,9 +1,9 @@
 # promo_change_mail.py
-# 2026-11-20  Jonghyun Park w/ Claude
+# 2026-11-23  Jonghyun Park w/ Claude
+# updated: 2026-11-23 — v1.6: "감지 안 됨" 을 두 줄로 나눴다 — 일정 엑셀 SCHEDULE_API_EXCLUDE_HEADER 열이 'O' 인 site 는
+#   별도 줄(API 제외, 회색)로, 나머지를 먼저 굵게. checker 에서 '/offer/ 없음' 사유로 주석 처리된 site 는 (offer 없음) 으로 표시
 # updated: 2026-11-20 — v1.5: 맨 위 요약에 "기간 진행중 · 감지 안 됨" site 줄 추가 (SCHEDULE_XLSX 일정 엑셀 기준,
 #   checker 오늘 결과에 hit 가 없는 site. 점검 목록 밖 · 접속 실패는 괄호로 표시)
-# updated: 2026-11-20 — v1.4: 기간 안에 처음 hit 된 site 는 제외(SKIP_FIRST_HIT_SITES — 첫 hit 메일과 중복 방지),
-#   pythonw 실행 시 output/_change_mail_latest.log 에 기록 (checker 작업의 두 번째 동작으로 등록)
 # (이전 버전 이력은 git history / GitHub Releases 참조 — 헤더에는 최근 2개 항목만 남긴다)
 r"""
 promo_change_mail — promo_link_checker 가 새로 캡처한 클릭 요소(신규 · 디자인변경)를 모아 메일로 알린다.
@@ -68,6 +68,9 @@ SCHEDULE_HEADER_ROW: int = 4
 SCHEDULE_SITE_HEADER: str = "Site Code"
 # 올해 기간 열 (시작, 끝) — 하나라도 오늘이 들어가면 진행중. 날짜가 아닌 칸('X' 등)은 무시
 SCHEDULE_PERIOD_COLS: list[tuple[str, str]] = [("H", "I"), ("J", "K"), ("L", "M")]
+# API 수기 제외 표시 열의 머리글 — 이 열이 'O' 인 site 는 '감지 안 됨' 에서 별도 줄(API 제외)로 뺀다.
+# 비우거나 엑셀에 그 열이 없으면 전부 한 줄로 적는다.
+SCHEDULE_API_EXCLUDE_HEADER: str = "api수기제외"
 
 # ─── 메일 모양 ─────────────────────────────────────────────────────
 # 제목 = checker 의 MAIL_SUBJECT_PREFIX + 아래 꼬리표. checker 접두를 그대로 쓰므로
@@ -163,10 +166,27 @@ def collect(state: dict, days: set[str], sent: dict, resend: bool) -> dict[str, 
     return by_site
 
 
-def undetected_sites(m, today: str) -> list[str] | None:
-    """일정 엑셀 기준 오늘 진행중인데 checker 오늘 결과에 hit(O)가 없는 sitecode — "ua", "mn(점검 목록 밖)" 형태.
-    괄호: 점검 목록 밖 = checker SITECODES 에 없음(주석 처리 포함), 오늘 결과 없음 = 목록엔 있는데 오늘 결과 행이 없음,
-    접속 실패 = 결과가 O/X 가 아닌 것(접근실패 등)만 있음.
+def _commented_reasons(m) -> dict[str, str]:
+    """checker SITECODES 에서 '#' 으로 막아 둔 sitecode → 괄호 표기. '/offer/ 없음' 사유면 'offer 없음'."""
+    out = {}
+    for line in (getattr(m, "SITECODES", "") or "").splitlines():
+        s = line.strip()
+        if not s.startswith("#"):
+            continue
+        parts = s.lstrip("#").split(None, 1)
+        if not parts or not re.fullmatch(r"[a-z]{2}(?:_[a-z]{2,3})?|[a-z_]+", parts[0]):
+            continue
+        reason = parts[1] if len(parts) > 1 else ""
+        if "offer" in reason.lower() and "없음" in reason:
+            out[parts[0].lower()] = "offer 없음"
+    return out
+
+
+def undetected_sites(m, today: str) -> tuple[list[str], list[str]] | None:
+    """일정 엑셀 기준 오늘 진행중인데 checker 오늘 결과에 hit(O)가 없는 sitecode — (일반, API 제외) 두 목록.
+    항목 형태: "ua", "mn(offer 없음)". API 제외 = 일정 엑셀 SCHEDULE_API_EXCLUDE_HEADER 열이 'O' 인 site.
+    괄호: offer 없음 = checker 에서 '/offer/ 없음' 사유로 주석 처리, 점검 목록 밖 = checker SITECODES 에 없음(그 밖의 주석 포함),
+    오늘 결과 없음 = 목록엔 있는데 오늘 결과 행이 없음, 접속 실패 = 결과가 O/X 가 아닌 것(접근실패 등)만 있음.
     SCHEDULE_XLSX 가 비었거나 읽을 수 없으면 None (요약 줄을 안 적는다)."""
     if not SCHEDULE_XLSX.strip():
         return None
@@ -179,13 +199,20 @@ def undetected_sites(m, today: str) -> list[str] | None:
     except Exception as e:
         print(f"⚠ 일정 엑셀을 못 읽어 '감지 안 됨' 요약을 뺀다: {e}")
         return None
-    site_idx = [str(c).strip() if c is not None else "" for c in rows[0]].index(SCHEDULE_SITE_HEADER)
+    header = [str(c).strip() if c is not None else "" for c in rows[0]]
+    site_idx = header.index(SCHEDULE_SITE_HEADER)
+    api_idx = header.index(SCHEDULE_API_EXCLUDE_HEADER) if SCHEDULE_API_EXCLUDE_HEADER in header else None
+    if SCHEDULE_API_EXCLUDE_HEADER and api_idx is None:
+        print(f"⚠ 일정 엑셀에 '{SCHEDULE_API_EXCLUDE_HEADER}' 열이 없어 API 제외 줄 없이 한 줄로 적는다.")
     pairs = [(column_index_from_string(a) - 1, column_index_from_string(b) - 1) for a, b in SCHEDULE_PERIOD_COLS]
     in_period: list[str] = []
+    api_excluded: set[str] = set()
     for row in rows[1:]:
         sc = str(row[site_idx] or "").strip().lower() if site_idx < len(row) else ""
         if not sc:
             continue
+        if api_idx is not None and api_idx < len(row) and str(row[api_idx] or "").strip().upper() == "O":
+            api_excluded.add(sc)
         for a, b in pairs:
             s, e = (row[a] if a < len(row) else None), (row[b] if b < len(row) else None)
             if isinstance(s, datetime) and isinstance(e, datetime) and s.date().isoformat() <= today <= e.date().isoformat():
@@ -209,16 +236,20 @@ def undetected_sites(m, today: str) -> list[str] | None:
         print("⚠ checker 오늘 결과가 없어 '감지 안 됨' 요약을 뺀다.")
         return None
     checked = set(m.parse_sitecodes())
-    out = []
+    reasons = _commented_reasons(m)
+    main, api = [], []
     for sc in sorted(set(in_period)):
         got = results.get(sc)
         if sc not in checked:
-            out.append(f"{sc}(점검 목록 밖)")
+            item = f"{sc}({reasons.get(sc, '점검 목록 밖')})"
         elif got is None:
-            out.append(f"{sc}(오늘 결과 없음)")
+            item = f"{sc}(오늘 결과 없음)"
         elif "O" not in got:
-            out.append(sc + ("(접속 실패)" if any(x not in ("O", "X") for x in got) else ""))
-    return out
+            item = sc + ("(접속 실패)" if any(x not in ("O", "X") for x in got) else "")
+        else:
+            continue
+        (api if sc in api_excluded else main).append(item)
+    return main, api
 
 
 def _desc(design: dict, first_seen: str, esc) -> str:
@@ -236,7 +267,7 @@ def _desc(design: dict, first_seen: str, esc) -> str:
 
 
 def build_html(m, by_site: dict[str, list[dict]], days: list[str],
-               undetected: list[str] | None = None) -> tuple[str, list[tuple[str, Path]], dict]:
+               undetected: tuple[list[str], list[str]] | None = None) -> tuple[str, list[tuple[str, Path]], dict]:
     """sitecode 별 표 — 한 행 = 같은 캡처 쌍(전 · 후)을 공유하는 요소 묶음. 전 / 후 캡처 이미지를 나란히 놓는다."""
     esc = html.escape
     counts = defaultdict(int)
@@ -258,8 +289,13 @@ def build_html(m, by_site: dict[str, list[dict]], days: list[str],
             lines.append(f'<li><b style="color:{_KIND_COLORS.get(kind, "#666")}">{esc(m.KIND_LABELS.get(kind, kind))}</b> '
                          f"{len(per)}개 site: {esc(sites_s)}</li>")
     if undetected is not None:
-        lines.append(f'<li><b style="color:#666">기간 진행중 · 감지 안 됨</b> {len(undetected)}개 site: '
-                     f'{esc(", ".join(undetected)) if undetected else "없음"}</li>')
+        main_u, api_u = undetected
+        # API 제외가 아닌데 감지 안 된 site 가 더 중요 → 먼저, 굵게. API 제외 site 는 다음 줄에 회색으로
+        lines.append(f'<li><b style="color:#c00000">기간 진행중 · 감지 안 됨</b> {len(main_u)}개 site: '
+                     f'<b>{esc(", ".join(main_u)) if main_u else "없음"}</b></li>')
+        if api_u:
+            lines.append(f'<li style="color:#888">(API 제외 site) 기간 진행중 · 감지 안 됨 {len(api_u)}개 site: '
+                         f'{esc(", ".join(api_u))}</li>')
     parts.append(f'<ul style="margin:4px 0 10px">{"".join(lines)}</ul>')
     images: list[tuple[str, Path]] = []
     cid_of: dict[Path, str] = {}       # 같은 캡처는 메일에 한 번만 싣는다
@@ -392,7 +428,9 @@ def main() -> int:
 
     undetected = undetected_sites(m, days[-1])
     if undetected is not None:
-        print(f"기간 진행중 · 감지 안 됨 {len(undetected)}개: {', '.join(undetected) or '없음'}")
+        print(f"기간 진행중 · 감지 안 됨 {len(undetected[0])}개: {', '.join(undetected[0]) or '없음'}")
+        if undetected[1]:
+            print(f"(API 제외 site) 기간 진행중 · 감지 안 됨 {len(undetected[1])}개: {', '.join(undetected[1])}")
     body, images, counts = build_html(m, by_site, days, undetected)
     summary = " · ".join(f"{m.KIND_LABELS.get(k, k)} {counts[k]}" for k in KINDS if counts[k])
     subject = f"{m.MAIL_SUBJECT_PREFIX}{SUBJECT_TAG} {days[-1][5:]} {summary} ({len(by_site)}개 site: {', '.join(sorted(by_site))})"
