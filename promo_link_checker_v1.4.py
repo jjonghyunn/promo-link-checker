@@ -1,12 +1,11 @@
 # promo_link_checker_v1.4.py
-# 2026-11-20  Jonghyun Park w/ Claude
+# 2026-11-23  Jonghyun Park w/ Claude
+# updated: 2026-11-23 — KEYWORDS 줄 끝 '@sitecode,…' 로 규칙을 특정 sitecode 에만 적용할 수 있게 했다
+#                       (흔한 표현이 다른 나라 상시 페이지(GNB 메뉴 등)에 걸리는 오탐 방지).
+#                       리포트·메일의 매칭키워드에는 '@…' 를 뺀 키워드만 적는다.
 # updated: 2026-11-20 — 첫 hit 메일 본문에서 보내는 PC 의 절대경로를 뺐다 (받는 사람마다 로컬 경로 앞부분이 다르다):
 #                       리포트 경로 줄 제거, 캡처 파일은 CAPTURE_DIR 기준 상대경로로 적고,
 #                       캡처 폴더는 맨 아래에 한 번만 적는다 (사용자 홈 아래면 홈을 뗀 경로)
-# updated: 2026-11-19 — v1.4: 한 번도 hit 된 적 없던 sitecode 가 처음 hit 되면 메일로 알린다 (MAIL_ON_FIRST_HIT) —
-#                       페이지 URL · 매칭 링크 · 캡처 이미지(본문 인라인 + 원본 첨부)를 로컬 Outlook 으로 자기 자신에게 보내고,
-#                       받은 알림 메일은 MAIL_MOVE_TO_FOLDER(받은편함 하위 폴더)로 옮긴다. --no-mail 로 그 실행만 끌 수 있다.
-#                       "첫 hit" = 실행 시작 시점의 캡처 기록(_capture_state.json)에 그 sitecode 가 아예 없던 경우.
 # (이전 버전 이력은 git history / GitHub Releases 참조 — 헤더에는 최근 2개 항목만 남긴다)
 r"""
 promo_link_checker — 국가별 홈 · 프로모션(offer) 페이지의 클릭 가능한 요소 중에
@@ -28,6 +27,8 @@ promo_link_checker — 국가별 홈 · 프로모션(offer) 페이지의 클릭 
         /summer/megasales/ (두 구간에 나뉨) · ?campaign=summer-sale (쿼리) · 링크 텍스트만 일치 → 제외
   host(도메인)·쿼리 파라미터·#fragment 는 보지 않는다. 여러 줄이면 OR.
   경로가 EXCLUDE_LINK_EXTENSIONS(기본 .pdf)로 끝나는 링크는 키워드가 맞아도 제외한다 (약관·고지 PDF).
+  줄 끝에 '@sitecode,sitecode' 를 붙이면 그 sitecode 페이지에서만 쓰는 규칙이 된다 (없으면 전 sitecode).
+    예) "galaxy gifts @pl,bg" → pl·bg 페이지에서만 hit. 상시 페이지가 같은 표현을 쓰는 다른 나라(uk 등)의 오탐 방지.
 
 사용 예:
   python promo_link_checker_v1.4.py
@@ -690,14 +691,29 @@ def normalize_text(value: str) -> str:
     return " " + _RE_NON_WORD.sub(" ", (value or "").lower()).strip() + " "
 
 
-def parse_keyword_rules(block: str | None = None) -> list[tuple[str, list[str]]]:
-    """KEYWORDS → [(원문 줄, [정규화 단어...]), ...]  (block 미지정 시 호출 시점의 KEYWORDS)"""
+def parse_keyword_rules(block: str | None = None) -> list[tuple[str, list[str], frozenset[str] | None]]:
+    """KEYWORDS → [(키워드 원문, [정규화 단어...], 적용 sitecode 집합 또는 None), ...]
+    줄 끝 '@sc1,sc2' 는 그 sitecode 에만 적용 (None = 전 sitecode). block 미지정 시 호출 시점의 KEYWORDS."""
     rules = []
     for line in _parse_lines(KEYWORDS if block is None else block):
-        words = [w for w in normalize_text(line).split() if w]
+        keyword, _, scope = line.partition("@")
+        keyword = keyword.strip()
+        sites = frozenset(s.strip().lower() for s in re.split(r"[,\s]+", scope) if s.strip()) or None
+        words = [w for w in normalize_text(keyword).split() if w]
         if words:
-            rules.append((line, words))
+            rules.append((keyword, words, sites))
     return rules
+
+
+def rules_for_site(rules, sitecode: str):
+    """sitecode 에 적용되는 규칙만 (scope 가 None 이거나 sitecode 를 포함)."""
+    sc = (sitecode or "").lower()
+    return [r for r in rules if r[2] is None or sc in r[2]]
+
+
+def describe_rule(rule) -> str:
+    keyword, _, sites = rule
+    return keyword if sites is None else f"{keyword} @{','.join(sorted(sites))}"
 
 
 def parse_sitecodes(block: str | None = None) -> list[str]:
@@ -718,11 +734,12 @@ def path_segments(url: str) -> list[str]:
     return [normalize_text(unquote(seg)) for seg in path.split("/") if seg.strip()]
 
 
-def match_rules(url: str, rules: list[tuple[str, list[str]]]) -> list[str]:
-    """경로 구간 **하나**에 규칙 단어가 모두 들어 있으면 그 규칙 원문을 돌려준다.
+def match_rules(url: str, rules) -> list[str]:
+    """경로 구간 **하나**에 규칙 단어가 모두 들어 있으면 그 규칙의 키워드 원문을 돌려준다.
+    sitecode 한정은 호출 전에 rules_for_site() 로 거른다.
     ⚠ 구간을 합쳐서 보면 /summer/megasales/ 처럼 서로 다른 구간의 단어가 섞여 걸린다."""
     segments = path_segments(url)
-    return [line for line, words in rules
+    return [keyword for keyword, words, _ in rules
             if any(all(w in seg for w in words) for seg in segments)]
 
 
@@ -1208,6 +1225,7 @@ def check_site(sitecode: str, page_key: str, rules, capture: bool, run_date: str
         })
         logger.debug("[%s] clickable elements: %d", tag, len(items))
 
+        site_rules = rules_for_site(rules, sitecode)
         matched_rules: list[str] = []
         hit_items: list[dict] = []
         for item in items:
@@ -1219,7 +1237,7 @@ def check_site(sitecode: str, page_key: str, rules, capture: bool, run_date: str
             link = item["abs"] or item["href"]
             if is_excluded_link(link):
                 continue
-            hits = match_rules(link, rules)
+            hits = match_rules(link, site_rules)
             if not hits:
                 continue
             hit_items.append(item)
@@ -1743,7 +1761,7 @@ def run(sitecodes: list[str], pages: list[str], capture: bool, run_date: str, ma
 
     # 작업 단위 = (sitecode, page). sitecode 순서 안에서 CHECK_PAGES 순서.
     jobs = [(sc, pg) for sc in sitecodes for pg in pages]
-    logger.info("🔑 키워드 규칙 %d개: %s", len(rules), " | ".join(line for line, _ in rules))
+    logger.info("🔑 키워드 규칙 %d개: %s", len(rules), " | ".join(describe_rule(r) for r in rules))
     logger.info("🌍 대상 %d개국 × 페이지 %s = %d건 · 캡처 %s · 리포트 날짜 %s",
                 len(sitecodes), "/".join(pages), len(jobs), "ON" if capture else "OFF", run_date)
 

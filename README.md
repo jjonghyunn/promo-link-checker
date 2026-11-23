@@ -1,5 +1,5 @@
 # promo_link_checker  
-<sub>2026-11-20  Jonghyun Park w/ Claude</sub>  
+<sub>2026-11-23  Jonghyun Park w/ Claude</sub>  
 국가별 **home · 프로모션(offer) 페이지의 클릭 가능한 요소** 중에 타겟 캠페인 링크가 걸려 있는지 매일 확인하고,
 결과를 `_daily_report.xlsx` 에 하루 1블록씩 누적하는 도구. 캡처는 **처음 보는 hit 요소, 또는 디자인이
 바뀐 요소가 있을 때만 1회** 찍는다(매일 누적 캡처하지 않음).
@@ -29,6 +29,17 @@ summer sale
 - 링크의 **URL 경로를 `/` 로 쪼갠 구간 하나 안에** 규칙 단어가 **전부** 들어 있어야 hit (AND).
   구간 안에서의 순서·사이 단어·구분자(`- _ .`)·대소문자는 상관없다.
 - 줄끼리는 **OR** — 어느 규칙이든 하나만 걸리면 hit.
+- 줄 끝에 **`@sitecode,sitecode`** 를 붙이면 그 sitecode 페이지에서만 쓰는 규칙이 된다 (없으면 전 sitecode).
+  흔한 표현(예: `gift`)은 다른 나라 상시 페이지(GNB 메뉴 등)에도 걸리므로, 실제로 캠페인에 쓴 sitecode 로 한정한다.
+  리포트·메일의 매칭키워드에는 `@…` 를 뺀 키워드만 적힌다.
+
+  ```python
+  KEYWORDS = """
+  summer sale
+  galaxy gifts @pl,bg
+  """
+  ```
+  → `…/uk/mobile/galaxygifts/` 는 uk 가 목록에 없어 ❌, `…/pl/offer/galaxy-gifts/` 는 ✅.
 
 | 링크 | 결과 | 이유 |
 |---|---|---|
