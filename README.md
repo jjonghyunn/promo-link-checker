@@ -4,7 +4,7 @@
 결과를 `_daily_report.xlsx` 에 하루 1블록씩 누적하는 도구. 캡처는 **처음 보는 hit 요소, 또는 디자인이
 바뀐 요소가 있을 때만 1회** 찍는다(매일 누적 캡처하지 않음).
 
-- 단일 파일 `promo_link_checker_v1.6.py` — 설정은 전부 상단 `사용자가 바꿔야 하는 부분` 블록.
+- 단일 파일 `promo_link_checker_v1.7.py` — 설정은 전부 상단 `사용자가 바꿔야 하는 부분` 블록.
 
 ---
 
@@ -148,26 +148,27 @@ offer
 ## 3. 실행
 
 ```bash
-python promo_link_checker_v1.6.py                    # SITECODES 전체
-python promo_link_checker_v1.6.py --sitecodes ae,hq # 일부 국가만
-python promo_link_checker_v1.6.py --pages home       # 일부 페이지만
-python promo_link_checker_v1.6.py --no-capture       # hit 여도 캡처 안 함
-python promo_link_checker_v1.6.py --no-mail          # 처음 hit 된 sitecode 가 있어도 메일 안 보냄
-python promo_link_checker_v1.6.py --debug            # 사이트별 클릭 요소 수 등 진단 로그
+python promo_link_checker_v1.7.py                    # SITECODES 전체
+python promo_link_checker_v1.7.py --sitecodes ae,hq # 일부 국가만
+python promo_link_checker_v1.7.py --pages home       # 일부 페이지만
+python promo_link_checker_v1.7.py --no-capture       # hit 여도 캡처 안 함
+python promo_link_checker_v1.7.py --no-mail          # 처음 hit 된 sitecode 가 있어도 메일 안 보냄
+python promo_link_checker_v1.7.py --debug            # 사이트별 클릭 요소 수 등 진단 로그
 ```
 
 ## 4. 출력
 
 ```
 promo_link_checker/
-├── promo_link_checker_v1.6.py
+├── promo_link_checker_v1.7.py
 ├── README.md
 └── output/
     ├── _daily_report.xlsx            ← 일일 누적 리포트
     ├── _run_latest.log               ← 매 실행 덮어씀 (스케줄 실행 추적용)
     ├── _capture_state.json           ← 이미 캡처한 요소 기록 (지우면 처음부터 다시 캡처)
     ├── _image_hash_state.json        ← 요소 영역별 마지막 이미지 해시 (IMAGE_HASH_MODE 가 off 가 아닐 때)
-    └── _image_hash_log.csv           ← 실행마다 요소 영역별 해시 거리 누적 (기준값 정하기용)
+    ├── _image_hash_log.csv           ← 실행마다 요소 영역별 해시 거리 누적 (기준값 정하기용)
+    └── _excluded_link_log.csv        ← EXCLUDE_LINK_KEYWORDS 로 뺀 링크 (캠페인 키워드에도 걸린 것) 누적 → 변경 메일 요약 한 줄 (v1.7)
 
 <CAPTURE_DIR>/                        ← 캡처 저장 폴더 (절대경로 상수, output 과 별개 위치)
 └── <sitecode>/
@@ -284,7 +285,7 @@ promo_link_checker/
 작업명 `promo_link_checker_<캠페인>`, 매일 **09:31 · 12:01**, `pythonw.exe` 직접 실행(콘솔 창 없음):
 
 ```powershell
-$script   = "<운영 폴더>\promo_link_checker_v1.6.py"
+$script   = "<운영 폴더>\promo_link_checker_v1.7.py"
 $action   = New-ScheduledTaskAction -Execute "C:\Python314\pythonw.exe" -Argument "`"$script`"" -WorkingDirectory (Split-Path $script)
 $trigger  = @("09:31", "12:01") | ForEach-Object { $t = New-ScheduledTaskTrigger -Daily -At $_; $t.EndBoundary = "2026-12-10T23:59:59"; $t }
 $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Hours 2) -MultipleInstances IgnoreNew
@@ -339,6 +340,7 @@ Get-ScheduledTask -TaskName "promo_link_checker_<캠페인>" | Get-ScheduledTask
 | `SKIP_FIRST_HIT_SITES` | 기간 안에 처음 hit 된 sitecode 는 뺀다 — checker 의 첫 hit 메일과 겹치지 않게 |
 | `SCHEDULE_XLSX` · `SCHEDULE_SHEET` · `SCHEDULE_HEADER_ROW` · `SCHEDULE_SITE_HEADER` · `SCHEDULE_PERIOD_COLS` | 캠페인 일정 엑셀 — 오늘이 기간(시작·끝 열 쌍) 안인데 checker 오늘 결과(일일 리포트)에 hit 가 없는 site 를 맨 위 요약에 "기간 진행중 · 감지 안 됨" 으로 적는다 (offer 없음 · 점검 목록 밖 · 오늘 결과 없음 · 접속 실패는 괄호 — checker 에서 `/offer/ 없음` 사유로 주석 처리된 site 는 offer 없음). 비우면 안 적는다. 변경 메일이 나갈 때만 같이 나간다 |
 | `SCHEDULE_API_EXCLUDE_HEADER` | 일정 엑셀에서 API 수기 제외를 표시한 열 머리글 (기본 `api수기제외`). 이 열이 `O` 인 site 는 "감지 안 됨" 에서 빼서 **다음 줄 `(API 제외 site)`** 에 회색으로 적고, API 제외가 아닌데 감지 안 된 site 를 먼저 굵게 적는다. 비우거나 열이 없으면 한 줄 |
+| `SHOW_EXCLUDED_LINKS` | 기본 `True`. 기간 안에 checker 가 `EXCLUDE_LINK_KEYWORDS` 로 뺀 링크(캠페인 키워드에도 걸린 것, checker 기록 `output/_excluded_link_log.csv`)가 있으면 요약 맨 아래에 **`(제외 규칙으로 뺀 링크) gr: christmas theater 1건`** 처럼 회색 한 줄로 적는다 (강조 없음, 같은 링크는 1건). 없으면 줄 자체가 없다 |
 | `SINCE_DAYS` | 오늘 포함 며칠 안의 기록을 볼지 |
 | `CARD_KINDS` | class 문자열 → 카드 종류 이름 (요소 설명에 쓴다) |
 | `MOVE_WAIT_SEC` | 보낸 메일이 받은편함에 올 때까지 기다렸다가 checker 의 `MAIL_MOVE_TO_FOLDER` 로 옮기는 최대 시간(초) |

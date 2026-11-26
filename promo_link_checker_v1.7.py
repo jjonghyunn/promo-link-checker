@@ -1,10 +1,9 @@
-# promo_link_checker_v1.6.py
+# promo_link_checker_v1.7.py
 # 2026-11-26  Jonghyun Park w/ Claude
+# updated: 2026-11-26 — v1.7: EXCLUDE_LINK_KEYWORDS 로 뺀 링크 중 캠페인 키워드에도 걸린 것을 output/_excluded_link_log.csv 에 남긴다.
+#                       promo_change_mail 이 기간 안 기록을 맨 위 요약에 회색 한 줄로 알린다 (팀원이 누락으로 오해하지 않게).
 # updated: 2026-11-26 — v1.6: EXCLUDE_LINK_KEYWORDS 추가 - KEYWORDS 와 같은 문법(구간 AND, '@sitecode' 한정)으로 적은 규칙에
 #                       걸리는 링크는 캠페인 키워드가 맞아도 hit 에서 뺀다 (특정 sitecode 의 상시 페이지 오탐 방지).
-# updated: 2026-11-23 — v1.5: hit 요소 영역만 따로 찍어 dHash(64비트 이미지 해시)를 만들고, 지난 실행과의 거리(0~64)를
-#                       output/_image_hash_log.csv 에 남긴다 (IMAGE_HASH_MODE 기본 "log" = 캡처 판정에는 안 씀).
-#                       "detect" 로 바꾸면 DOM 지문이 같아도 거리가 IMAGE_HASH_THRESHOLD 를 넘을 때 디자인 변경으로 보고 다시 캡처한다.
 # (이전 버전 이력은 git history / GitHub Releases 참조 — 헤더에는 최근 2개 항목만 남긴다)
 r"""
 promo_link_checker — 국가별 홈 · 프로모션(offer) 페이지의 클릭 가능한 요소 중에
@@ -33,11 +32,11 @@ promo_link_checker — 국가별 홈 · 프로모션(offer) 페이지의 클릭 
     예) "christmas theater @gr" → gr 페이지의 /…christmas_theater…/ 링크 제외 (다른 sitecode 는 그대로)
 
 사용 예:
-  python promo_link_checker_v1.6.py
-  python promo_link_checker_v1.6.py --sitecodes ae,hq
-  python promo_link_checker_v1.6.py --pages home
-  python promo_link_checker_v1.6.py --sitecodes uk --debug --no-capture
-  python promo_link_checker_v1.6.py --no-mail          (첫 hit 메일 알림을 이번 실행만 끔)
+  python promo_link_checker_v1.7.py
+  python promo_link_checker_v1.7.py --sitecodes ae,hq
+  python promo_link_checker_v1.7.py --pages home
+  python promo_link_checker_v1.7.py --sitecodes uk --debug --no-capture
+  python promo_link_checker_v1.7.py --no-mail          (첫 hit 메일 알림을 이번 실행만 끔)
 
 출력 (스크립트 폴더 기준):
   output/_daily_report.xlsx                      일일 누적 리포트 (유일한 상시 산출물)
@@ -279,6 +278,8 @@ IMAGE_HASH_MIN_SIZE: int = 16
 IMAGE_HASH_TIMEOUT_MS: int = 5000
 IMAGE_HASH_STATE_NAME: str = "_image_hash_state.json"
 IMAGE_HASH_LOG_NAME: str = "_image_hash_log.csv"
+# EXCLUDE_LINK_KEYWORDS 로 뺀 링크 기록 (캠페인 키워드에도 걸렸던 것만). promo_change_mail 이 요약 한 줄로 알린다.
+EXCLUDED_LINK_LOG_NAME: str = "_excluded_link_log.csv"
 # 캡처 시 테두리: 새로 찍는 이유가 된 요소(신규·디자인 변경) / 이미 찍은 적 있는 요소
 # 기본은 둘을 같은 색으로 둔다 (구분은 범례의 신규/디자인변경/기존 표기로). 색으로 나누려면 KNOWN 쪽 값을 바꾼다.
 HIGHLIGHT_STYLE: str = "4px solid red"
@@ -405,6 +406,7 @@ RESULT_COLUMNS = ["sitecode", "page", "url", "final_url", "result", "keywords", 
                   "capture", "more_captures", "prev_capture", "new_elements", "image_hashes", "detail", "checked_at"]
 IMAGE_HASH_LOG_COLUMNS = ["checked_at", "sitecode", "page", "n", "element", "link", "dom_kind",
                           "hash", "prev_hash", "distance", "over_threshold"]
+EXCLUDED_LINK_LOG_COLUMNS = ["checked_at", "sitecode", "page", "exclude_rule", "keyword", "link"]
 _RE_CSS_URL = re.compile(r"""url\(["']?([^"')]+)["']?\)""")
 _RE_DIGITS = re.compile(r"\d+")
 _RE_URI_ESCAPE = re.compile(r"[%# ]")       # file:// 하이퍼링크에서 인코딩할 글자 (_capture_link)
@@ -1058,6 +1060,22 @@ def _append_image_hash_log(rows: list[dict]) -> None:
         logger.warning("⚠️ 이미지 해시 로그 기록 실패: %s", e)
 
 
+def _append_csv_log(name: str, columns: list[str], rows: list[dict], label: str) -> None:
+    """OUTPUT_DIR/name 에 행을 덧붙인다 (없으면 머리글부터). 메인 스레드에서만 부른다."""
+    if not rows:
+        return
+    path = OUTPUT_DIR / name
+    new = not path.exists()
+    try:
+        with open(path, "a", encoding="utf-8-sig", newline="") as f:
+            w = csv.DictWriter(f, fieldnames=columns)
+            if new:
+                w.writeheader()
+            w.writerows(rows)
+    except Exception as e:
+        logger.warning("⚠️ %s 실패: %s", label, e)
+
+
 def load_capture_state() -> dict:
     """{"sitecode|page": {링크키: {지문: {"first_seen", "capture", "design"}}}}"""
     path = OUTPUT_DIR / CAPTURE_STATE_NAME
@@ -1112,8 +1130,10 @@ class RetryableHttpStatus(Exception):
 
 
 def _result(sitecode, page, url, result, final_url="", keywords="", links="", capture="", detail="",
-            prev_capture="", new_elements="", more_captures="", image_hashes=""):
+            prev_capture="", new_elements="", more_captures="", image_hashes="", excluded=""):
+    # excluded 는 결과 CSV 에 안 쓰는 내부 값 — 메인 스레드가 꺼내 EXCLUDED_LINK_LOG_NAME 에 기록한다
     return {
+        "excluded": excluded,
         "sitecode": sitecode, "page": page, "url": url, "final_url": final_url, "result": result,
         "keywords": keywords, "links": links, "capture": capture, "more_captures": more_captures,
         "prev_capture": prev_capture,
@@ -1367,6 +1387,7 @@ def check_site(sitecode: str, page_key: str, rules, capture: bool, run_date: str
         site_exclude_rules = rules_for_site(parse_keyword_rules(EXCLUDE_LINK_KEYWORDS), sitecode)
         matched_rules: list[str] = []
         hit_items: list[dict] = []
+        excluded_hits: list[dict] = []     # 제외 키워드로 뺀 링크 중 캠페인 키워드에도 걸린 것 (메일 요약용 기록)
         for item in items:
             if EXCLUDE_GLOBAL_UI and item["global_ui"]:
                 continue
@@ -1376,19 +1397,23 @@ def check_site(sitecode: str, page_key: str, rules, capture: bool, run_date: str
             link = item["abs"] or item["href"]
             if is_excluded_link(link):
                 continue
-            if site_exclude_rules and match_rules(link, site_exclude_rules):
-                continue
             hits = match_rules(link, site_rules)
+            ex_hits = match_rules(link, site_exclude_rules) if site_exclude_rules else []
+            if ex_hits:
+                if hits and not any(e["link"] == link for e in excluded_hits):
+                    excluded_hits.append({"exclude_rule": ", ".join(ex_hits), "keyword": ", ".join(hits), "link": link})
+                continue
             if not hits:
                 continue
             hit_items.append(item)
             for h in hits:
                 if h not in matched_rules:
                     matched_rules.append(h)
+        excluded_json = json.dumps(excluded_hits, ensure_ascii=False) if excluded_hits else ""
 
         if not hit_items:
             return _result(sitecode, page_key, url, RESULT_MISS, page.url,
-                           detail=f"clickable {len(items)}")
+                           detail=f"clickable {len(items)}", excluded=excluded_json)
 
         # ── 요소별 디자인 지문 → 이미 캡처한 요소인지 판정 ──
         descs = page.evaluate(_JS_DESCRIBE, [it["idx"] for it in hit_items])
@@ -1513,7 +1538,8 @@ def check_site(sitecode: str, page_key: str, rules, capture: bool, run_date: str
                                                  "link": it["abs"] or it["href"]}
                                                 for it in hit_items if it["idx"] in img_hashes],
                                                ensure_ascii=False) if img_hashes else "",
-                       detail=f"clickable {len(items)} / hit {len(hit_items)} / new {len(new_elems)}")
+                       detail=f"clickable {len(items)} / hit {len(hit_items)} / new {len(new_elems)}",
+                       excluded=excluded_json)
     finally:
         try:
             page.close()
@@ -1977,7 +2003,12 @@ def run(sitecodes: list[str], pages: list[str], capture: bool, run_date: str, ma
         for i in range(1, len(jobs) + 1):
             row = result_q.get()
             tag = f"{row['sitecode']}/{row['page']}"
+            excluded = row.pop("excluded", "")
             _append_result_csv(csv_path, row)     # 메인 스레드에서만 쓴다
+            if excluded:
+                _append_csv_log(EXCLUDED_LINK_LOG_NAME, EXCLUDED_LINK_LOG_COLUMNS,
+                                [{"checked_at": row["checked_at"], "sitecode": row["sitecode"], "page": row["page"], **e}
+                                 for e in json.loads(excluded)], "제외 링크 기록")
             if row.get("image_hashes"):
                 img_bucket = image_state.setdefault(_state_key(row["sitecode"], row["page"]), {})
                 log_rows = []

@@ -1,9 +1,9 @@
 # promo_change_mail.py
-# 2026-11-23  Jonghyun Park w/ Claude
+# 2026-11-26  Jonghyun Park w/ Claude
+# updated: 2026-11-26 - v1.7: 맨 위 요약 맨 아래에 "(제외 규칙으로 뺀 링크) gr: christmas theater 1건" 회색 한 줄 추가
+#   (checker 의 EXCLUDED_LINK_LOG_NAME 기록 중 기간 안 것, sitecode · 제외 규칙별 링크 수. 없으면 줄 없음. SHOW_EXCLUDED_LINKS)
 # updated: 2026-11-23 — v1.6: "감지 안 됨" 을 두 줄로 나눴다 — 일정 엑셀 SCHEDULE_API_EXCLUDE_HEADER 열이 'O' 인 site 는
 #   별도 줄(API 제외, 회색)로, 나머지를 먼저 굵게. checker 에서 '/offer/ 없음' 사유로 주석 처리된 site 는 (offer 없음) 으로 표시
-# updated: 2026-11-20 — v1.5: 맨 위 요약에 "기간 진행중 · 감지 안 됨" site 줄 추가 (SCHEDULE_XLSX 일정 엑셀 기준,
-#   checker 오늘 결과에 hit 가 없는 site. 점검 목록 밖 · 접속 실패는 괄호로 표시)
 # (이전 버전 이력은 git history / GitHub Releases 참조 — 헤더에는 최근 2개 항목만 남긴다)
 r"""
 promo_change_mail — promo_link_checker 가 새로 캡처한 클릭 요소(신규 · 디자인변경)를 모아 메일로 알린다.
@@ -71,6 +71,11 @@ SCHEDULE_PERIOD_COLS: list[tuple[str, str]] = [("H", "I"), ("J", "K"), ("L", "M"
 # API 수기 제외 표시 열의 머리글 — 이 열이 'O' 인 site 는 '감지 안 됨' 에서 별도 줄(API 제외)로 뺀다.
 # 비우거나 엑셀에 그 열이 없으면 전부 한 줄로 적는다.
 SCHEDULE_API_EXCLUDE_HEADER: str = "api수기제외"
+
+# ─── 제외 규칙으로 뺀 링크 (맨 위 요약 맨 아래 회색 한 줄) ──────────────
+# checker 의 EXCLUDE_LINK_KEYWORDS 로 뺀 링크(캠페인 키워드에도 걸린 것)가 기간 안에 있으면 sitecode 별로 적는다.
+# False 면 안 적는다. 기간 안에 제외된 링크가 없으면 줄 자체가 없다.
+SHOW_EXCLUDED_LINKS: bool = True
 
 # ─── 메일 모양 ─────────────────────────────────────────────────────
 # 제목 = checker 의 MAIL_SUBJECT_PREFIX + 아래 꼬리표. checker 접두를 그대로 쓰므로
@@ -252,6 +257,28 @@ def undetected_sites(m, today: str) -> tuple[list[str], list[str]] | None:
     return main, api
 
 
+def excluded_links(m, days: list[str]) -> list[str]:
+    """기간 안에 checker 가 EXCLUDE_LINK_KEYWORDS 로 뺀 링크 → ["gr: christmas theater 1건", ...].
+    같은 링크는 하루 여러 번 · 여러 날 기록돼도 1건. 기록 파일이 없거나 SHOW_EXCLUDED_LINKS 가 False 면 빈 목록."""
+    name = getattr(m, "EXCLUDED_LINK_LOG_NAME", "")
+    if not SHOW_EXCLUDED_LINKS or not name:
+        return []
+    path = m.OUTPUT_DIR / name
+    if not path.is_file():
+        return []
+    import csv
+    links: dict[tuple[str, str], set[str]] = defaultdict(set)
+    try:
+        with open(path, encoding="utf-8-sig", newline="") as f:
+            for r in csv.DictReader(f):
+                if (r.get("checked_at") or "")[:10] in days:
+                    links[(r["sitecode"], r["exclude_rule"])].add(r["link"])
+    except Exception as e:
+        print(f"⚠ 제외 링크 기록을 못 읽음: {e}")
+        return []
+    return [f"{sc}: {rule} {len(v)}건" for (sc, rule), v in sorted(links.items())]
+
+
 def _desc(design: dict, first_seen: str, esc) -> str:
     """요소 한 줄 설명 — 날짜 · 카드 종류 · 크기 + 이미지 파일명 또는 텍스트."""
     classes = " ".join(design.get("classes") or [])
@@ -267,7 +294,8 @@ def _desc(design: dict, first_seen: str, esc) -> str:
 
 
 def build_html(m, by_site: dict[str, list[dict]], days: list[str],
-               undetected: tuple[list[str], list[str]] | None = None) -> tuple[str, list[tuple[str, Path]], dict]:
+               undetected: tuple[list[str], list[str]] | None = None,
+               excluded: list[str] | None = None) -> tuple[str, list[tuple[str, Path]], dict]:
     """sitecode 별 표 — 한 행 = 같은 캡처 쌍(전 · 후)을 공유하는 요소 묶음. 전 / 후 캡처 이미지를 나란히 놓는다."""
     esc = html.escape
     counts = defaultdict(int)
@@ -296,6 +324,9 @@ def build_html(m, by_site: dict[str, list[dict]], days: list[str],
         if api_u:
             lines.append(f'<li style="color:#888">(API 제외 site) 기간 진행중 · 감지 안 됨 {len(api_u)}개 site: '
                          f'{esc(", ".join(api_u))}</li>')
+    if excluded:
+        # 의도적으로 뺀 것이라 강조 없이 회색 (팀원이 누락으로 오해하지 않게만)
+        lines.append(f'<li style="color:#888">(제외 규칙으로 뺀 링크) {esc(", ".join(excluded))}</li>')
     parts.append(f'<ul style="margin:4px 0 10px">{"".join(lines)}</ul>')
     images: list[tuple[str, Path]] = []
     cid_of: dict[Path, str] = {}       # 같은 캡처는 메일에 한 번만 싣는다
@@ -431,7 +462,10 @@ def main() -> int:
         print(f"기간 진행중 · 감지 안 됨 {len(undetected[0])}개: {', '.join(undetected[0]) or '없음'}")
         if undetected[1]:
             print(f"(API 제외 site) 기간 진행중 · 감지 안 됨 {len(undetected[1])}개: {', '.join(undetected[1])}")
-    body, images, counts = build_html(m, by_site, days, undetected)
+    excluded = excluded_links(m, days)
+    if excluded:
+        print(f"(제외 규칙으로 뺀 링크) {', '.join(excluded)}")
+    body, images, counts = build_html(m, by_site, days, undetected, excluded)
     summary = " · ".join(f"{m.KIND_LABELS.get(k, k)} {counts[k]}" for k in KINDS if counts[k])
     subject = f"{m.MAIL_SUBJECT_PREFIX}{SUBJECT_TAG} {days[-1][5:]} {summary} ({len(by_site)}개 site: {', '.join(sorted(by_site))})"
     print(subject)
