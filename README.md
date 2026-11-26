@@ -1,10 +1,10 @@
 # promo_link_checker  
-<sub>2026-11-23  Jonghyun Park w/ Claude</sub>  
+<sub>2026-11-26  Jonghyun Park w/ Claude</sub>  
 국가별 **home · 프로모션(offer) 페이지의 클릭 가능한 요소** 중에 타겟 캠페인 링크가 걸려 있는지 매일 확인하고,
 결과를 `_daily_report.xlsx` 에 하루 1블록씩 누적하는 도구. 캡처는 **처음 보는 hit 요소, 또는 디자인이
 바뀐 요소가 있을 때만 1회** 찍는다(매일 누적 캡처하지 않음).
 
-- 단일 파일 `promo_link_checker_v1.5.py` — 설정은 전부 상단 `사용자가 바꿔야 하는 부분` 블록.
+- 단일 파일 `promo_link_checker_v1.6.py` — 설정은 전부 상단 `사용자가 바꿔야 하는 부분` 블록.
 
 ---
 
@@ -52,6 +52,17 @@ summer sale
 | `…/offer/?cid=summer-sale` | ❌ | **쿼리 파라미터·#fragment 제외** |
 | `…/assets/terms_summer_sale_2026.pdf` | ❌ | **`.pdf` 링크 제외** (`EXCLUDE_LINK_EXTENSIONS`) — 경로에 캠페인명이 든 약관·고지 PDF 오탐 방지 |
 | `…/offer/pay-sale/` | ❌ | **도메인(host) 제외** — 넣으면 모든 링크가 브랜드명을 가져 `sale` 만으로 걸린다 |
+| `…/gr/offer/christmas_theater/` | ❌ | **제외 키워드** (`EXCLUDE_LINK_KEYWORDS` 에 `christmas theater @gr` 를 적은 경우) — gr 페이지에서만 제외 |
+
+### EXCLUDE_LINK_KEYWORDS — 제외 키워드 (v1.6)
+`KEYWORDS` 와 같은 문법(한 줄 = 규칙 1개, 경로 한 구간 안 AND, 줄 끝 `@sitecode` 로 한정). 여기 걸리는 링크는 `KEYWORDS` 가 맞아도 hit 에서 뺀다. 기본값은 빈 값(제외 안 함).
+
+```python
+EXCLUDE_LINK_KEYWORDS = """
+christmas theater @gr
+"""
+```
+→ 특정 sitecode 의 상시 페이지가 캠페인 키워드와 같은 경로 구간을 써서 생기는 오탐을 그 sitecode 에서만 뺀다.
 
 ### CHECK_PAGES — 볼 페이지
 따옴표 없이 한 줄에 하나. 쓸 수 있는 값은 `PAGE_SEGMENTS` 의 키(`home`, `offer`). 빼려면 줄을 지우거나 `#`.
@@ -137,19 +148,19 @@ offer
 ## 3. 실행
 
 ```bash
-python promo_link_checker_v1.5.py                    # SITECODES 전체
-python promo_link_checker_v1.5.py --sitecodes ae,hq # 일부 국가만
-python promo_link_checker_v1.5.py --pages home       # 일부 페이지만
-python promo_link_checker_v1.5.py --no-capture       # hit 여도 캡처 안 함
-python promo_link_checker_v1.5.py --no-mail          # 처음 hit 된 sitecode 가 있어도 메일 안 보냄
-python promo_link_checker_v1.5.py --debug            # 사이트별 클릭 요소 수 등 진단 로그
+python promo_link_checker_v1.6.py                    # SITECODES 전체
+python promo_link_checker_v1.6.py --sitecodes ae,hq # 일부 국가만
+python promo_link_checker_v1.6.py --pages home       # 일부 페이지만
+python promo_link_checker_v1.6.py --no-capture       # hit 여도 캡처 안 함
+python promo_link_checker_v1.6.py --no-mail          # 처음 hit 된 sitecode 가 있어도 메일 안 보냄
+python promo_link_checker_v1.6.py --debug            # 사이트별 클릭 요소 수 등 진단 로그
 ```
 
 ## 4. 출력
 
 ```
 promo_link_checker/
-├── promo_link_checker_v1.5.py
+├── promo_link_checker_v1.6.py
 ├── README.md
 └── output/
     ├── _daily_report.xlsx            ← 일일 누적 리포트
@@ -273,7 +284,7 @@ promo_link_checker/
 작업명 `promo_link_checker_<캠페인>`, 매일 **09:31 · 12:01**, `pythonw.exe` 직접 실행(콘솔 창 없음):
 
 ```powershell
-$script   = "<운영 폴더>\promo_link_checker_v1.5.py"
+$script   = "<운영 폴더>\promo_link_checker_v1.6.py"
 $action   = New-ScheduledTaskAction -Execute "C:\Python314\pythonw.exe" -Argument "`"$script`"" -WorkingDirectory (Split-Path $script)
 $trigger  = @("09:31", "12:01") | ForEach-Object { $t = New-ScheduledTaskTrigger -Daily -At $_; $t.EndBoundary = "2026-12-10T23:59:59"; $t }
 $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Hours 2) -MultipleInstances IgnoreNew

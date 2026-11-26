@@ -1,11 +1,10 @@
-# promo_link_checker_v1.5.py
-# 2026-11-23  Jonghyun Park w/ Claude
+# promo_link_checker_v1.6.py
+# 2026-11-26  Jonghyun Park w/ Claude
+# updated: 2026-11-26 — v1.6: EXCLUDE_LINK_KEYWORDS 추가 - KEYWORDS 와 같은 문법(구간 AND, '@sitecode' 한정)으로 적은 규칙에
+#                       걸리는 링크는 캠페인 키워드가 맞아도 hit 에서 뺀다 (특정 sitecode 의 상시 페이지 오탐 방지).
 # updated: 2026-11-23 — v1.5: hit 요소 영역만 따로 찍어 dHash(64비트 이미지 해시)를 만들고, 지난 실행과의 거리(0~64)를
 #                       output/_image_hash_log.csv 에 남긴다 (IMAGE_HASH_MODE 기본 "log" = 캡처 판정에는 안 씀).
 #                       "detect" 로 바꾸면 DOM 지문이 같아도 거리가 IMAGE_HASH_THRESHOLD 를 넘을 때 디자인 변경으로 보고 다시 캡처한다.
-# updated: 2026-11-23 — KEYWORDS 줄 끝 '@sitecode,…' 로 규칙을 특정 sitecode 에만 적용할 수 있게 했다
-#                       (흔한 표현이 다른 나라 상시 페이지(GNB 메뉴 등)에 걸리는 오탐 방지).
-#                       리포트·메일의 매칭키워드에는 '@…' 를 뺀 키워드만 적는다.
 # (이전 버전 이력은 git history / GitHub Releases 참조 — 헤더에는 최근 2개 항목만 남긴다)
 r"""
 promo_link_checker — 국가별 홈 · 프로모션(offer) 페이지의 클릭 가능한 요소 중에
@@ -30,13 +29,15 @@ promo_link_checker — 국가별 홈 · 프로모션(offer) 페이지의 클릭 
   경로가 EXCLUDE_LINK_EXTENSIONS(기본 .pdf)로 끝나는 링크는 키워드가 맞아도 제외한다 (약관·고지 PDF).
   줄 끝에 '@sitecode,sitecode' 를 붙이면 그 sitecode 페이지에서만 쓰는 규칙이 된다 (없으면 전 sitecode).
     예) "galaxy gifts @pl,bg" → pl·bg 페이지에서만 hit. 상시 페이지가 같은 표현을 쓰는 다른 나라(uk 등)의 오탐 방지.
+  EXCLUDE_LINK_KEYWORDS 는 같은 문법의 제외 규칙이다. 여기 걸리는 링크는 KEYWORDS 가 맞아도 hit 에서 뺀다.
+    예) "christmas theater @gr" → gr 페이지의 /…christmas_theater…/ 링크 제외 (다른 sitecode 는 그대로)
 
 사용 예:
-  python promo_link_checker_v1.5.py
-  python promo_link_checker_v1.5.py --sitecodes ae,hq
-  python promo_link_checker_v1.5.py --pages home
-  python promo_link_checker_v1.5.py --sitecodes uk --debug --no-capture
-  python promo_link_checker_v1.5.py --no-mail          (첫 hit 메일 알림을 이번 실행만 끔)
+  python promo_link_checker_v1.6.py
+  python promo_link_checker_v1.6.py --sitecodes ae,hq
+  python promo_link_checker_v1.6.py --pages home
+  python promo_link_checker_v1.6.py --sitecodes uk --debug --no-capture
+  python promo_link_checker_v1.6.py --no-mail          (첫 hit 메일 알림을 이번 실행만 끔)
 
 출력 (스크립트 폴더 기준):
   output/_daily_report.xlsx                      일일 누적 리포트 (유일한 상시 산출물)
@@ -212,6 +213,10 @@ TEXT_ATTRIBUTES: list[str] = ["aria-label", "title"]
 # 링크 URL 경로가 이 확장자로 끝나면 키워드가 맞아도 hit 에서 뺀다 (대소문자 무시).
 # 경로에 캠페인명이 들어간 약관·고지 PDF 가 hit 로 잡히는 오탐 방지. 빈 리스트면 제외 안 함.
 EXCLUDE_LINK_EXTENSIONS: list[str] = [".pdf"]
+# 제외 키워드 — KEYWORDS 와 같은 문법 (한 줄 = 규칙 1개, 경로 한 구간 안 AND, 줄 끝 '@sitecode,…' 로 sitecode 한정).
+# 여기 걸리는 링크는 KEYWORDS 가 맞아도 hit 에서 뺀다. 비우면 제외 안 함.
+EXCLUDE_LINK_KEYWORDS = """
+"""
 # "클릭 가능한 요소" 셀렉터
 CLICKABLE_SELECTOR: str = "a[href], area[href]"
 # True 면 GNB/Footer 안 링크는 hit 에서 뺀다 (False = 페이지 전체. 리포트엔 영역 태그가 붙는다)
@@ -1359,6 +1364,7 @@ def check_site(sitecode: str, page_key: str, rules, capture: bool, run_date: str
         logger.debug("[%s] clickable elements: %d", tag, len(items))
 
         site_rules = rules_for_site(rules, sitecode)
+        site_exclude_rules = rules_for_site(parse_keyword_rules(EXCLUDE_LINK_KEYWORDS), sitecode)
         matched_rules: list[str] = []
         hit_items: list[dict] = []
         for item in items:
@@ -1369,6 +1375,8 @@ def check_site(sitecode: str, page_key: str, rules, capture: bool, run_date: str
             # 상대경로도 브라우저가 해석한 절대 URL(abs)로 본다
             link = item["abs"] or item["href"]
             if is_excluded_link(link):
+                continue
+            if site_exclude_rules and match_rules(link, site_exclude_rules):
                 continue
             hits = match_rules(link, site_rules)
             if not hits:
